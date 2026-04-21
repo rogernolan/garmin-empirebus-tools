@@ -223,12 +223,6 @@ func (s *Session) logFrame(frame Frame) {
 	if s.cfg.Logger == nil {
 		return
 	}
-	if frame.SignalID() == SignalHeatingTargetTemp {
-		if _, temp, ok := decodeTargetTemperature(frame.Wire.Data); ok {
-			s.cfg.Logger.Printf("%s target=%.1fC", frame.String(), temp)
-			return
-		}
-	}
 	s.cfg.Logger.Print(frame.String())
 }
 

@@ -101,10 +101,9 @@ var signalLabels = map[int]string{
 }
 
 func (f Frame) String() string {
-	label := signalLabels[f.SignalID()]
-	labelPart := ""
-	if label != "" {
-		labelPart = fmt.Sprintf(" label=%q", label)
+	compactPart := ""
+	if compact := f.CompactInterpretation(); compact != "" {
+		compactPart = fmt.Sprintf(" %s", compact)
 	}
 	return fmt.Sprintf(
 		"%s %s type=%d cmd=%d signal=%d%s data=%v",
@@ -113,7 +112,57 @@ func (f Frame) String() string {
 		f.Wire.MessageType,
 		f.Wire.MessageCmd,
 		f.SignalID(),
-		labelPart,
+		compactPart,
 		f.Wire.Data,
 	)
+}
+
+func (f Frame) CompactInterpretation() string {
+	label := signalLabels[f.SignalID()]
+	value := f.InterpretationValue()
+	if label == "" || value == "" {
+		return ""
+	}
+	return fmt.Sprintf("%s:%s", label, value)
+}
+
+func (f Frame) InterpretationValue() string {
+	data := f.Wire.Data
+	if len(data) < 3 {
+		return ""
+	}
+	switch f.SignalID() {
+	case SignalHeatingPower:
+		switch data[2] {
+		case 0:
+			return "off"
+		case 1:
+			return "on"
+		case 3:
+			return "command_on"
+		case 5:
+			return "command_off"
+		case 129:
+			return "transition"
+		}
+	case SignalHeatingTargetTemp:
+		if _, tempC, ok := decodeTargetTemperature(data); ok {
+			return fmt.Sprintf("%.1fC", tempC)
+		}
+	case SignalHeatingBusy:
+		if data[2] == 0 {
+			return "false"
+		}
+		if data[2] == 1 {
+			return "true"
+		}
+	case SignalHeatingPump:
+		if data[2] == 0 {
+			return "false"
+		}
+		if data[2] == 1 {
+			return "true"
+		}
+	}
+	return ""
 }

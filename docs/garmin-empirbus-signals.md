@@ -207,11 +207,19 @@ For heater power:
 - `data[1]`: `0`
 - `data[2]`: `3` for ON, `5` for OFF
 
+Observed receive-state interpretations used by this repo's Go logger and state tracker:
+
+- receive `data[2]=1`: heater power on
+- receive `data[2]=0`: heater power off
+- receive `data[2]=129`: heater transition / changing state
+
 For heater temp up/down:
 
 - `data[0]`: `107` or `108`
 - `data[1]`: `0`
 - `data[2]`: `1` for press, `0` for release
+
+For target temperature (`105`), the Go logger currently renders inferred interpretations like `set_temp=20.0C` from the payload using the decode logic in [heating/state.go](/Users/rog/Development/xtura-automation/heating/state.go:109). This remains inference from repo-local captures such as [Heating.har](/Users/rog/Development/xtura-automation/Heating.har) and [Heating 13C-20C.har](/Users/rog/Development/xtura-automation/Heating%2013C-20C.har), not a browser-confirmed field specification.
 
 ## Fuses
 
@@ -356,4 +364,3 @@ Recommended follow-up once the repo is known:
 - Confirm `All Interior Lights Off` via a real browser click HAR.
 - Confirm whether water, power, and fuse controls use the same `type=17` action pattern.
 - Decode `signal 105` for heater target temperature beyond the currently known sample values.
-

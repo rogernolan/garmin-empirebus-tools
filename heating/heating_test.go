@@ -90,6 +90,84 @@ func TestReplayHeatingSweepHAR(t *testing.T) {
 	}
 }
 
+func TestFrameStringIncludesTargetTemperatureInterpretation(t *testing.T) {
+	t.Parallel()
+	frame := Frame{
+		At:        time.Unix(0, 0),
+		Direction: DirectionReceive,
+		Wire: WireFrame{
+			MessageType: 16,
+			MessageCmd:  0,
+			Size:        8,
+			Data:        []int{105, 0, 0, 22, 0, 121, 4, 0},
+		},
+	}
+
+	got := frame.String()
+	if !strings.Contains(got, `HeatingTargetTemp:20.0C`) {
+		t.Fatalf("expected target temperature interpretation in %q", got)
+	}
+	if strings.Contains(got, `label="HeatingTargetTemp"`) {
+		t.Fatalf("expected redundant label to be removed from %q", got)
+	}
+}
+
+func TestFrameStringIncludesHeatingPowerInterpretation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		data []int
+		want string
+	}{
+		{name: "power on state", data: []int{101, 0, 1}, want: `HeatingTurnON/OFF ALDE:on`},
+		{name: "power off state", data: []int{101, 0, 0}, want: `HeatingTurnON/OFF ALDE:off`},
+		{name: "power on command", data: []int{101, 0, 3}, want: `HeatingTurnON/OFF ALDE:command_on`},
+		{name: "power off command", data: []int{101, 0, 5}, want: `HeatingTurnON/OFF ALDE:command_off`},
+		{name: "power transition", data: []int{101, 0, 129}, want: `HeatingTurnON/OFF ALDE:transition`},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			frame := Frame{
+				At:        time.Unix(0, 0),
+				Direction: DirectionReceive,
+				Wire: WireFrame{
+					MessageType: 16,
+					MessageCmd:  0,
+					Size:        len(tc.data),
+					Data:        tc.data,
+				},
+			}
+
+			got := frame.String()
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("expected %s in %q", tc.want, got)
+			}
+		})
+	}
+}
+
+func TestFrameStringIncludesHeatingBusyCompactInterpretation(t *testing.T) {
+	t.Parallel()
+	frame := Frame{
+		At:        time.Unix(0, 0),
+		Direction: DirectionReceive,
+		Wire: WireFrame{
+			MessageType: 16,
+			MessageCmd:  0,
+			Size:        3,
+			Data:        []int{102, 0, 0},
+		},
+	}
+
+	got := frame.String()
+	if !strings.Contains(got, `HeatingBusy:false`) {
+		t.Fatalf("expected busy interpretation in %q", got)
+	}
+}
+
 func TestEnsureOffIsIdempotentWhenAlreadyOff(t *testing.T) {
 	t.Parallel()
 	session := NewSession(SessionConfig{TraceWindow: time.Second})
