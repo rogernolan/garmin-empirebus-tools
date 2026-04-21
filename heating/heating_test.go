@@ -1,8 +1,15 @@
 package heating
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestDecodeTargetTemperatureSamples(t *testing.T) {
@@ -80,5 +87,133 @@ func TestReplayHeatingSweepHAR(t *testing.T) {
 	}
 	if state.PowerState != PowerOff {
 		t.Fatalf("got power %s want off", state.PowerState)
+	}
+}
+
+func TestEnsureOffIsIdempotentWhenAlreadyOff(t *testing.T) {
+	t.Parallel()
+	session := NewSession(SessionConfig{TraceWindow: time.Second})
+	client := NewClient(session)
+	session.ingest(Frame{
+		At:        time.Unix(0, 0),
+		Direction: DirectionReceive,
+		Wire:      WireFrame{Data: []int{SignalHeatingPower, 0, 0}},
+	})
+	if err := client.EnsureOff(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.State().PowerState; got != PowerOff {
+		t.Fatalf("got power %s want off", got)
+	}
+}
+
+func TestEnsureOffSendsPowerOffAndWaitsForConfirmation(t *testing.T) {
+	t.Parallel()
+	received := make(chan WireFrame, 8)
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			wire, err := ParseWireFrame(string(payload))
+			if err != nil {
+				continue
+			}
+			select {
+			case received <- wire:
+			default:
+			}
+			if len(wire.Data) >= 3 && wire.Data[0] == SignalHeatingPower && wire.Data[2] == 5 {
+				response, err := marshalWireFrame(WireFrame{
+					MessageType: 16,
+					MessageCmd:  0,
+					Size:        3,
+					Data:        []int{SignalHeatingPower, 0, 0},
+				})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(response)); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	session := NewSession(SessionConfig{
+		WSURL:             wsURL,
+		HeartbeatInterval: time.Hour,
+		TraceWindow:       time.Second,
+		BootstrapMessages: []string{
+			`{"messagetype":96,"messagecmd":0,"size":0,"data":[]}`,
+		},
+	})
+	client := NewClient(session)
+	if err := session.Connect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+	})
+	session.ingest(Frame{
+		At:        time.Unix(0, 0),
+		Direction: DirectionReceive,
+		Wire:      WireFrame{Data: []int{SignalHeatingPower, 0, 1}},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := client.EnsureOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := session.State().PowerState; got != PowerOff {
+		t.Fatalf("got power %s want off", got)
+	}
+
+	offCount := 0
+drain:
+	for {
+		select {
+		case wire := <-received:
+			if len(wire.Data) >= 3 && wire.Data[0] == SignalHeatingPower && wire.Data[2] == 5 {
+				offCount++
+			}
+		default:
+			break drain
+		}
+	}
+	if offCount != 1 {
+		t.Fatalf("got %d off commands want 1", offCount)
+	}
+
+	if err := client.EnsureOff(ctx); err != nil {
+		t.Fatal(err)
+	}
+	offCount = 0
+drainAgain:
+	for {
+		select {
+		case wire := <-received:
+			if len(wire.Data) >= 3 && wire.Data[0] == SignalHeatingPower && wire.Data[2] == 5 {
+				offCount++
+			}
+		default:
+			break drainAgain
+		}
+	}
+	if offCount != 0 {
+		t.Fatalf("got %d extra off commands after idempotent call", offCount)
 	}
 }

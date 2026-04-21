@@ -43,6 +43,28 @@ func (c *Client) EnsureOn(ctx context.Context) error {
 	return err
 }
 
+func (c *Client) EnsureOff(ctx context.Context) error {
+	c.session.WithTraceWindow(c.session.cfg.TraceWindow)
+	state := c.session.State()
+	if state.PowerState == PowerOff {
+		return nil
+	}
+	if err := c.session.sendCommand(WireFrame{
+		MessageType: 17,
+		MessageCmd:  0,
+		Size:        3,
+		Data:        []int{SignalHeatingPower, 0, 5},
+	}); err != nil {
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	_, err := c.session.waitFor(waitCtx, func(state HeaterState) bool {
+		return state.PowerState == PowerOff
+	})
+	return err
+}
+
 func (c *Client) GetTargetTemp(ctx context.Context) (float64, error) {
 	c.session.WithTraceWindow(c.session.cfg.TraceWindow)
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
