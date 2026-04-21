@@ -273,6 +273,24 @@ Validation rules:
 This model allows adjacent `heat` periods with different temperatures.
 Those transitions should change setpoint without cycling heater power off and on.
 
+### Daylight Saving Time
+
+Heating programs are defined in local wall-clock time in the configured timezone, for example `Europe/London`.
+The scheduler must handle daylight saving transitions explicitly rather than relying on accidental runtime behavior.
+
+Policy for the POC:
+
+- on spring-forward days, if a configured transition falls in a nonexistent local time, run it at the first valid local time after the gap
+- on fall-back days, if a configured transition falls in the repeated hour, run it only once at the first occurrence of that local time
+- a program day still conceptually begins at local `00:00`, even though the elapsed duration of that day may be 23 or 25 hours
+
+Examples in `Europe/London`:
+
+- if a transition is configured for `01:30` on the spring DST change day, it should execute when the clock first reaches a valid time after the skipped interval
+- if a transition is configured for `01:30` on the autumn DST change day, it should execute once at the first `01:30`, not twice
+
+This keeps the schedule aligned to human local time rather than elapsed UTC intervals, which is the correct mental model for heating programs.
+
 At runtime the scheduler should:
 
 1. calculate the active period for the current local time and day
