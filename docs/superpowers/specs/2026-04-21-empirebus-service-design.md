@@ -3,10 +3,11 @@
 ## Summary
 
 Build a Go daemon that hides Garmin websocket traffic behind a stable local API for heating control and future vehicle automation.
-The first proof of concept should expose REST endpoints plus a simple event stream, keep one normalized in-memory state model, and execute one config-defined heating schedule:
+The first proof of concept should expose REST endpoints plus a simple event stream, keep one normalized in-memory state model, and execute one config-defined daily heating program:
 
-- at `05:30`, ensure heating is on and set target temperature to `20.0 C`
-- at `08:00`, ensure heating is off
+- `00:00` to `05:30`: heating off
+- `05:30` to `08:00`: heating on with target temperature `20.0 C`
+- `08:00` to `24:00`: heating off
 
 The daemon should reuse the existing Go heating client as the first hardware adapter rather than inventing a second heater control path.
 
@@ -135,7 +136,7 @@ The POC should expose HTTP JSON endpoints plus one server-sent event stream.
 - `GET /v1/heating/state`
 - `POST /v1/heating/power`
 - `POST /v1/heating/target-temperature`
-- `GET /v1/automation/schedules`
+- `GET /v1/automation/heating-programs`
 
 Suggested request and response shapes:
 
@@ -183,9 +184,9 @@ Suggested request and response shapes:
 }
 ```
 
-`GET /v1/automation/schedules`
+`GET /v1/automation/heating-programs`
 
-Returns the schedule entries loaded from config, along with next-run metadata derived at runtime.
+Returns the heating programs loaded from config, along with the currently active period and next transition metadata derived at runtime.
 
 ### Event Stream
 
@@ -242,31 +243,51 @@ That should be added to the existing heating client because the first schedule n
 
 ## Automation Model
 
-The POC automation system should support file-configured schedules and sequenced actions.
+The POC automation system should support file-configured daily heating programs rather than isolated on and off events.
 
-Each schedule entry should contain:
+Each heating program should contain:
 
 - a stable identifier
-- wall-clock trigger time
 - applicable days
-- ordered actions
+- an ordered list of periods covering the full 24-hour day
 - optional enabled or disabled status
 
-Each action should be represented in a domain-oriented way, not as raw Garmin commands.
+Each period should contain:
 
-Initial action types:
+- a `start` time in local wall-clock time
+- a `mode` of `off` or `heat`
+- a required `target_celsius` when `mode` is `heat`
 
-- `heating.ensure_on`
-- `heating.ensure_off`
-- `heating.set_target_temperature`
+The model is intentionally total.
+Each day must be fully defined rather than leaving gaps or implied behavior between schedule entries.
+
+Validation rules:
+
+- every heating program must start with a period at `00:00`
+- period start times must be strictly increasing within the day
+- the final period implicitly runs until `24:00`
+- adjacent periods with the same effective state should be rejected as redundant
+- `heat` periods must specify `target_celsius`
+- a program day with no explicit heating should still be represented as a single `00:00` `off` period
+
+This model allows adjacent `heat` periods with different temperatures.
+Those transitions should change setpoint without cycling heater power off and on.
 
 At runtime the scheduler should:
 
-1. calculate next run times in the configured timezone
-2. wake at the next due action
-3. execute each action in order
-4. emit execution events and logs
-5. continue scheduling after success or failure
+1. calculate the active period for the current local time and day
+2. calculate the next transition time in the configured timezone
+3. wake at each transition boundary
+4. derive the required domain action from the previous and next periods
+5. emit execution events and logs
+6. continue scheduling after success or failure
+
+Transition rules for the first POC:
+
+- `off -> heat(target)` means `EnsureOn` and then `SetTargetTemperature(target)`
+- `heat(a) -> heat(b)` means keep heater power on and call only `SetTargetTemperature(b)`
+- `heat(*) -> off` means `EnsureOff`
+- `off -> off` should never appear in a valid program because it is redundant
 
 For the first POC, a simple in-process scheduler is preferred over shelling out to system cron.
 
@@ -275,7 +296,7 @@ For the first POC, a simple in-process scheduler is preferred over shelling out 
 System cron is a valid future operational detail, but it should not be the primary automation boundary.
 If cron owns the schedule, the service loses a coherent model of planned automation, next runs, and execution outcomes.
 
-The service should instead own schedules as first-class domain objects.
+The service should instead own heating programs as first-class domain objects.
 If needed later, the scheduler implementation can be backed by cron-like expressions or even delegated externally without changing the public API.
 
 ## Configuration
@@ -292,25 +313,24 @@ garmin:
 
 automation:
   timezone: Europe/London
-  schedules:
-    - id: morning-heat-on
-      at: "05:30"
+  heating_programs:
+    - id: daily-default
       days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-      actions:
-        - type: heating.ensure_on
-        - type: heating.set_target_temperature
-          celsius: 20.0
-    - id: morning-heat-off
-      at: "08:00"
-      days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-      actions:
-        - type: heating.ensure_off
+      periods:
+        - start: "00:00"
+          mode: "off"
+        - start: "05:30"
+          mode: "heat"
+          target_celsius: 20.0
+        - start: "08:00"
+          mode: "off"
 
 api:
   listen: 0.0.0.0:8080
 ```
 
 The config schema should be generic enough to absorb future domains without needing a redesign.
+The UI can hide some of this explicitness later, but the stored configuration should remain total and unambiguous.
 
 ## Command Semantics
 
