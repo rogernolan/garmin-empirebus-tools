@@ -130,14 +130,21 @@ Send the known browser-captured exterior-lights-on action once, then disconnect:
 
 ```bash
 . .venv/bin/activate
-python send_exterior_lights_on.py
+python send_lights_on.py
+```
+
+Send all interior lights on instead:
+
+```bash
+. .venv/bin/activate
+python send_lights_on.py --lights interior
 ```
 
 Use debug mode to print the startup frames, toggle write, and the first returned frames after the send:
 
 ```bash
 . .venv/bin/activate
-python send_exterior_lights_on.py --debug --read-count-after-send 10
+python send_lights_on.py --debug --read-count-after-send 10
 ```
 
 ## Help
@@ -146,3 +153,28 @@ python send_exterior_lights_on.py --debug --read-count-after-send 10
 python empirbus_filter.py --help
 python capture_ws.py --help
 ```
+
+## Go Heating CLI
+
+The repo now also includes a Go-based heater test client:
+
+```bash
+cd /Users/rog/Development/empirebus-tests
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go test ./...
+```
+
+Build and run the CLI:
+
+```bash
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go run ./cmd/heatingctl ensure-on --verbose
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go run ./cmd/heatingctl get-target-temp --verbose
+PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go run ./cmd/heatingctl set-target-temp --value 20.0 --verbose
+```
+
+The Go client currently:
+
+- replays the Garmin bootstrap and heartbeat traffic
+- tracks heater state from websocket messages
+- decodes target temperature from the observed `signal 105` payloads
+- uses press/release semantics for temperature up and down
+- prints relevant heater frames in verbose mode during an operation and for a short window afterwards
