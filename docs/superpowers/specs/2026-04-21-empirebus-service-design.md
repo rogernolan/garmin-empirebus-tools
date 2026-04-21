@@ -45,7 +45,7 @@ This service should build on that work by wrapping it in a long-lived daemon wit
 Use a long-running Go daemon with explicit boundaries between:
 
 - transport adapters for noisy live protocols
-- domain services for normalized state and commands
+- domain services for normalized state and command intent
 - automation for schedules and future rules
 - API surfaces for synchronous commands and streaming updates
 
@@ -56,7 +56,7 @@ Illustrative package layout:
 - `cmd/empirebusd`: process entrypoint
 - `service/config`: file loading and validation
 - `service/runtime`: process wiring and lifecycle
-- `service/domains/heating`: normalized heating state and command service
+- `service/domains/heating`: normalized heating state and command intent, currently backed by Garmin
 - `service/adapters/garmin`: bridge to the existing `heating` package
 - `service/automation`: schedule loading and execution
 - `service/api/http`: REST handlers
@@ -81,7 +81,7 @@ The recommended service-with-adapters approach keeps the POC small while preserv
 The daemon should own these concerns:
 
 - maintaining the Garmin websocket session through the adapter
-- projecting noisy live traffic into a stable current-state model
+- projecting noisy live Garmin traffic into a stable current-state model
 - accepting normalized commands from HTTP clients
 - executing scheduled actions
 - emitting normalized events for observers
@@ -91,6 +91,18 @@ The daemon should not expose Garmin frame structure directly in its public API.
 That detail belongs behind the adapter boundary.
 
 ## Domain Model
+
+In the POC, heating is not an independent hardware integration.
+It is a service-level model of heating intent and heating state that is currently implemented entirely through Garmin.
+The separation is by responsibility, not by upstream source count.
+
+That means:
+
+- the Garmin adapter owns websocket behavior, Garmin signal IDs, frame decoding, and press or release command mechanics
+- the heating domain owns meanings such as `power_state=on`, `target_temperature_c=20.0`, `ready=true`, and intents such as `ensure_off`
+
+This boundary is still useful even with only one upstream because it gives clients and future rules a stable language that does not depend on Garmin protocol details.
+It will become more valuable as soon as the service also incorporates other sources such as cabin temperature sensors, weather, motion, or mains status.
 
 The initial normalized state should include two broad areas:
 
@@ -111,6 +123,7 @@ The initial normalized state should include two broad areas:
 - service start time
 
 This state should be safe for clients to reason about without any knowledge of Garmin message families, bootstrapping, or press-and-release semantics.
+For example, a client should ask for `set target temperature to 20.0 C`, not for repeated Garmin writes on signal `107`.
 
 ## Public API
 
@@ -203,11 +216,13 @@ Its responsibilities:
 
 - establish and maintain the Garmin websocket session
 - replay bootstrap and heartbeat behavior through the existing code
-- observe heating state from the session
-- expose normalized command methods to the domain layer
+- observe Garmin-backed heating state from the session
+- expose Garmin-backed implementations of normalized heating commands to the domain layer
 - translate Garmin-specific errors into service-level errors
 
 The heating domain should call an interface owned by the service, not the raw `heating.Client` directly.
+In the first version, that interface will have only one implementation: the Garmin-backed adapter.
+The point is to hide Garmin protocol details from the rest of the service, not to pretend the heating domain is already source-independent.
 
 Illustrative interface:
 
@@ -386,6 +401,7 @@ The eventual rule examples discussed so far fit this direction:
 - if mains is connected, use mains to heat water
 
 The first POC should not solve those rules yet, but it should avoid closing off the path to them.
+One likely early example is combining Garmin-backed heater control with a non-Garmin temperature or weather input while keeping the public heating API unchanged.
 
 ## Implementation Notes
 
