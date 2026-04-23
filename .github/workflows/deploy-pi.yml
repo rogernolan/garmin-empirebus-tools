@@ -52,7 +52,7 @@ jobs:
         with:
           oauth-client-id: "${{ secrets.TS_OAUTH_CLIENT_ID }}"
           oauth-secret: "${{ secrets.TS_OAUTH_SECRET }}"
-          tags: "tag:XTURA-CI"
+          tags: "tag:xtura-ci"
 
       - name: Validate deploy configuration
         run: |

@@ -119,7 +119,7 @@ Recommended:
 
 Typical shape in your tailnet policy:
 
-- source: `tag:XTURA-CI`
+- source: `tag:xtura-ci`
 - destination: the Pi host
 - user: your deploy user, for example `rog` or another sudo-capable admin account
 
