@@ -68,6 +68,7 @@ Current design notes live in:
 - [2026-04-21-empirebus-service-design.md](/Users/rog/Development/empirebus-tests/docs/superpowers/specs/2026-04-21-empirebus-service-design.md)
 - [2026-04-21-heating-go-client-design.md](/Users/rog/Development/empirebus-tests/docs/superpowers/specs/2026-04-21-heating-go-client-design.md)
 - [heating-schedule-api.md](/Users/rog/Development/xtura-automation/docs/heating-schedule-api.md)
+- [pi-deployment.md](/Users/rog/Development/xtura-automation/docs/pi-deployment.md)
 - [garmin-empirbus-signals.md](/Users/rog/Development/empirebus-tests/docs/garmin-empirbus-signals.md)
 
 ## Python Tooling

@@ -1,0 +1,18 @@
+[Unit]
+Description=EmpireBus Heating Service
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xtura
+Group=xtura
+WorkingDirectory=/opt/xtura/current
+ExecStart=/opt/xtura/current/empirebusd -config /var/lib/xtura/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
