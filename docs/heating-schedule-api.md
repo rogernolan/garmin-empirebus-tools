@@ -181,6 +181,7 @@ Boost example:
 - `POST /v1/heating/mode/off`
 - `POST /v1/heating/mode/manual`
 - `POST /v1/heating/mode/boost`
+- `POST /v1/heating/mode/boost/cancel`
 
 ### Schedule Mode
 
@@ -268,6 +269,26 @@ Response:
     "resume_mode": "schedule"
   },
   "updated_at": "2026-04-22T10:33:00Z"
+}
+```
+
+### Cancel Boost
+
+Cancels an active boost and returns heating to the boost's saved resume mode, using the same restore behavior as boost expiry.
+
+Request:
+
+```http
+POST /v1/heating/mode/boost/cancel
+Content-Type: application/json
+```
+
+Response:
+
+```json
+{
+  "mode": "schedule",
+  "updated_at": "2026-04-22T10:45:00Z"
 }
 ```
 

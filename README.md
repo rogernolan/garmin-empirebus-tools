@@ -57,6 +57,7 @@ Current HTTP endpoints:
 - `POST /v1/heating/mode/off`
 - `POST /v1/heating/mode/manual`
 - `POST /v1/heating/mode/boost`
+- `POST /v1/heating/mode/boost/cancel`
 - `POST /v1/heating/power`
 - `POST /v1/heating/target-temperature`
 - `GET /v1/automation/heating-programs`

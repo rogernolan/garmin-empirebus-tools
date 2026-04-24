@@ -16,9 +16,10 @@ import (
 )
 
 type fakeApp struct {
-	broker   *events.Broker
-	schedule config.HeatingScheduleDocument
-	mode     config.HeatingRuntimeState
+	broker            *events.Broker
+	schedule          config.HeatingScheduleDocument
+	mode              config.HeatingRuntimeState
+	cancelBoostCalled *bool
 }
 
 func (f fakeApp) Health() runtime.ServiceHealthView {
@@ -58,6 +59,13 @@ func (f fakeApp) SetHeatingModeManual(context.Context, float64) (config.HeatingR
 }
 
 func (f fakeApp) SetHeatingModeBoost(context.Context, float64, time.Duration) (config.HeatingRuntimeState, error) {
+	return f.mode, nil
+}
+
+func (f fakeApp) CancelHeatingModeBoost(context.Context) (config.HeatingRuntimeState, error) {
+	if f.cancelBoostCalled != nil {
+		*f.cancelBoostCalled = true
+	}
 	return f.mode, nil
 }
 
@@ -177,6 +185,32 @@ func TestHandleHeatingModeGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if mode.Mode != config.HeatingModeManual {
+		t.Fatalf("got mode %q", mode.Mode)
+	}
+}
+
+func TestHandleHeatingModeBoostCancel(t *testing.T) {
+	called := false
+	app := fakeApp{
+		broker:            events.NewBroker(1),
+		mode:              config.HeatingRuntimeState{Mode: config.HeatingModeSchedule},
+		cancelBoostCalled: &called,
+	}
+	server := New(app)
+	req := httptest.NewRequest(http.MethodPost, "/v1/heating/mode/boost/cancel", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("expected cancel boost to be called")
+	}
+	var mode config.HeatingRuntimeState
+	if err := json.Unmarshal(rr.Body.Bytes(), &mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode.Mode != config.HeatingModeSchedule {
 		t.Fatalf("got mode %q", mode.Mode)
 	}
 }

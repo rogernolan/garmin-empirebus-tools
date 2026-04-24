@@ -30,6 +30,7 @@ type Application interface {
 	SetHeatingModeOff(context.Context) (config.HeatingRuntimeState, error)
 	SetHeatingModeManual(context.Context, float64) (config.HeatingRuntimeState, error)
 	SetHeatingModeBoost(context.Context, float64, time.Duration) (config.HeatingRuntimeState, error)
+	CancelHeatingModeBoost(context.Context) (config.HeatingRuntimeState, error)
 	HeatingSchedule() config.HeatingScheduleDocument
 	UpdateHeatingSchedule(context.Context, config.HeatingScheduleDocument) (config.HeatingScheduleDocument, error)
 	Broker() *events.Broker
@@ -50,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/heating/mode/off", s.handleHeatingModeOff)
 	mux.HandleFunc("/v1/heating/mode/manual", s.handleHeatingModeManual)
 	mux.HandleFunc("/v1/heating/mode/boost", s.handleHeatingModeBoost)
+	mux.HandleFunc("/v1/heating/mode/boost/cancel", s.handleHeatingModeBoostCancel)
 	mux.HandleFunc("/v1/automation/heating-programs", s.handleHeatingPrograms)
 	mux.HandleFunc("/v1/automation/heating-schedule", s.handleHeatingSchedule)
 	mux.HandleFunc("/v1/events", s.handleEvents)
@@ -228,6 +230,21 @@ func (s *Server) handleHeatingModeBoost(w http.ResponseWriter, r *http.Request) 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	state, err := s.app.SetHeatingModeBoost(ctx, body.TargetCelsius, time.Duration(body.DurationMinutes)*time.Minute)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) handleHeatingModeBoostCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	state, err := s.app.CancelHeatingModeBoost(ctx)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return

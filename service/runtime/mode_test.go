@@ -90,3 +90,45 @@ func TestCollapseExpiredBoostRestoresResumeMode(t *testing.T) {
 		t.Fatalf("unexpected manual target %#v", collapsed.ManualTargetCelsius)
 	}
 }
+
+func TestCancelHeatingModeBoostRestoresResumeMode(t *testing.T) {
+	t.Parallel()
+	adapter := &fakeHeatingController{}
+	app := &App{
+		adapter:          adapter,
+		broker:           events.NewBroker(1),
+		logger:           log.New(io.Discard, "", 0),
+		runtimeStatePath: filepath.Join(t.TempDir(), "runtime.yaml"),
+		schedulerWake:    make(chan struct{}, 1),
+	}
+	manual := 18.5
+	app.modeState = config.HeatingRuntimeState{
+		Mode: config.HeatingModeBoost,
+		Boost: &config.HeatingBoostState{
+			TargetCelsius:             22.0,
+			ExpiresAt:                 time.Now().UTC().Add(time.Hour),
+			ResumeMode:                config.HeatingModeManual,
+			ResumeManualTargetCelsius: &manual,
+		},
+	}
+
+	state, err := app.CancelHeatingModeBoost(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Mode != config.HeatingModeManual {
+		t.Fatalf("got mode %q", state.Mode)
+	}
+	if state.Boost != nil {
+		t.Fatalf("expected boost to be cleared, got %#v", state.Boost)
+	}
+	if state.ManualTargetCelsius == nil || *state.ManualTargetCelsius != manual {
+		t.Fatalf("unexpected manual target %#v", state.ManualTargetCelsius)
+	}
+	if adapter.ensureOnCalls != 1 {
+		t.Fatalf("got ensureOnCalls=%d", adapter.ensureOnCalls)
+	}
+	if len(adapter.setTargetCalls) != 1 || adapter.setTargetCalls[0] != manual {
+		t.Fatalf("unexpected set target calls %#v", adapter.setTargetCalls)
+	}
+}

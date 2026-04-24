@@ -58,6 +58,17 @@ func (a *App) SetHeatingModeBoost(ctx context.Context, targetCelsius float64, du
 	return a.setHeatingMode(ctx, state)
 }
 
+func (a *App) CancelHeatingModeBoost(ctx context.Context) (config.HeatingRuntimeState, error) {
+	a.mu.RLock()
+	state := cloneRuntimeState(a.modeState)
+	a.mu.RUnlock()
+	restored, next := resumeBoostState(state, time.Now().UTC())
+	if !restored {
+		return state, nil
+	}
+	return a.setHeatingMode(ctx, next)
+}
+
 func (a *App) setHeatingMode(ctx context.Context, state config.HeatingRuntimeState) (config.HeatingRuntimeState, error) {
 	state.UpdatedAt = time.Now().UTC()
 	if err := state.Validate(); err != nil {
@@ -114,6 +125,13 @@ func collapseExpiredBoost(state config.HeatingRuntimeState, now time.Time) (bool
 		return false, state
 	}
 	if now.Before(state.Boost.ExpiresAt) {
+		return false, state
+	}
+	return resumeBoostState(state, now)
+}
+
+func resumeBoostState(state config.HeatingRuntimeState, now time.Time) (bool, config.HeatingRuntimeState) {
+	if state.Mode != config.HeatingModeBoost || state.Boost == nil {
 		return false, state
 	}
 	next := config.DefaultHeatingRuntimeState()
