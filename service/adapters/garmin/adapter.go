@@ -72,6 +72,9 @@ func (a *Adapter) needsConnect() bool {
 func (a *Adapter) tryConnect(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
+	if a.logger != nil {
+		a.logger.Printf("garmin connect: ws_url=%s origin=%s", a.cfg.WSURL, a.cfg.Origin)
+	}
 	session := rootheating.NewSession(rootheating.SessionConfig{
 		WSURL:             a.cfg.WSURL,
 		Origin:            a.cfg.Origin,
@@ -84,6 +87,9 @@ func (a *Adapter) tryConnect(parent context.Context) {
 		a.health.Connected = false
 		a.health.LastError = err.Error()
 		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin connect failed: ws_url=%s err=%v", a.cfg.WSURL, err)
+		}
 		return
 	}
 	a.mu.Lock()
@@ -93,6 +99,9 @@ func (a *Adapter) tryConnect(parent context.Context) {
 	a.health.Connected = true
 	a.health.LastError = ""
 	a.mu.Unlock()
+	if a.logger != nil {
+		a.logger.Printf("garmin connect succeeded: ws_url=%s", a.cfg.WSURL)
+	}
 }
 
 func (a *Adapter) pollState() {
@@ -107,6 +116,9 @@ func (a *Adapter) pollState() {
 		a.health.Connected = false
 		a.health.LastError = err.Error()
 		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin session error: %v", err)
+		}
 		return
 	}
 	state := session.State()
@@ -157,12 +169,18 @@ func (a *Adapter) withClient(fn func(*rootheating.Client) error) error {
 	client := a.client
 	a.mu.RUnlock()
 	if client == nil {
+		if a.logger != nil {
+			a.logger.Printf("garmin command rejected: adapter not connected")
+		}
 		return fmt.Errorf("garmin adapter not connected")
 	}
 	if err := fn(client); err != nil {
 		a.mu.Lock()
 		a.state.LastCommandError = err.Error()
 		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin command failed: %v", err)
+		}
 		return err
 	}
 	a.pollState()

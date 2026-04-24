@@ -291,6 +291,7 @@ func (a *App) schedulerLoop(ctx context.Context) {
 			case <-a.schedulerWake:
 				continue
 			case <-time.After(30 * time.Second):
+				a.logger.Printf("scheduler next transition unavailable: err=%v mode=%s", err, a.HeatingMode().Mode)
 				continue
 			}
 		}
@@ -333,11 +334,17 @@ func (a *App) reconcileCurrentState(ctx context.Context) {
 		}
 		calc, err := scheduler.Calculate(program, automation.Location, now)
 		if err != nil {
-			a.logger.Printf("scheduler reconcile: %v", err)
+			a.logger.Printf("scheduler reconcile calculate failed: program=%s now=%s err=%v", program.ID, now.UTC().Format(time.RFC3339), err)
 			continue
 		}
 		if err := a.applyPeriod(ctx, calc.ActivePeriod); err != nil {
-			a.logger.Printf("scheduler reconcile program=%s: %v", program.ID, err)
+			a.logger.Printf(
+				"scheduler reconcile apply failed: program=%s mode=%s target=%s err=%v",
+				program.ID,
+				calc.ActivePeriod.Mode,
+				formatTargetCelsius(calc.ActivePeriod.TargetCelsius),
+				err,
+			)
 		}
 	}
 }
@@ -401,7 +408,14 @@ func (a *App) executeTransition(ctx context.Context, next scheduler.ProgramCalcu
 	})
 	err := a.applyPeriod(ctx, next.Calculation.NextPeriod)
 	if err != nil {
-		a.logger.Printf("scheduler program=%s: %v", next.Program.ID, err)
+		a.logger.Printf(
+			"scheduler execution failed: program=%s action=%s next_mode=%s next_target=%s err=%v",
+			next.Program.ID,
+			next.Calculation.Action.Kind,
+			next.Calculation.NextPeriod.Mode,
+			formatTargetCelsius(next.Calculation.NextPeriod.TargetCelsius),
+			err,
+		)
 		a.broker.Publish(events.Event{
 			Type:          "automation.run_failed",
 			Timestamp:     time.Now().UTC(),
@@ -440,4 +454,11 @@ func (a *App) applyPeriod(ctx context.Context, period domainheating.HeatingPerio
 	default:
 		return fmt.Errorf("unsupported period mode %q", period.Mode)
 	}
+}
+
+func formatTargetCelsius(target *float64) string {
+	if target == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1fC", *target)
 }

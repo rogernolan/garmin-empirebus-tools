@@ -39,6 +39,13 @@ func main() {
 		log.Fatalf("start app: %v", err)
 	}
 	logger.Printf("empirebusd starting: config=%s listen=%s", configPath, normalized.API.Listen)
+	logger.Printf(
+		"empirebusd garmin target: ws_url=%s origin=%s heartbeat=%s trace_window=%s",
+		normalized.Garmin.WSURL,
+		normalized.Garmin.Origin,
+		normalized.Garmin.HeartbeatInterval,
+		normalized.Garmin.TraceWindow,
+	)
 	server := &http.Server{
 		Addr:              normalized.API.Listen,
 		Handler:           httpapi.New(app).Handler(),
