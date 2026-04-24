@@ -15,6 +15,7 @@ import (
 	"empirebus-tests/service/automation/scheduler"
 	"empirebus-tests/service/config"
 	domainheating "empirebus-tests/service/domains/heating"
+	domainlights "empirebus-tests/service/domains/lights"
 )
 
 type HeatingController interface {
@@ -101,6 +102,10 @@ func (a *App) Broker() *events.Broker {
 
 func (a *App) HeatingState() domainheating.State {
 	return a.adapter.CurrentState()
+}
+
+func (a *App) LightsState() domainlights.State {
+	return domainlights.State{}
 }
 
 func (a *App) Health() domainheating.ServiceHealth {
