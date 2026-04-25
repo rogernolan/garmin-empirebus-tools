@@ -26,6 +26,12 @@ type HeatingController interface {
 	Health() domainheating.AdapterHealth
 }
 
+type LightsController interface {
+	EnsureExteriorOn(context.Context) error
+	EnsureExteriorOff(context.Context) error
+	LightsState() domainlights.State
+}
+
 type App struct {
 	startedAt        time.Time
 	cfg              config.NormalizedConfig
@@ -36,9 +42,12 @@ type App struct {
 	runtimeStatePath string
 	logger           *log.Logger
 	adapter          HeatingController
+	lights           LightsController
 	broker           *events.Broker
+	sleep            func(time.Duration)
 
 	mu               sync.RWMutex
+	lightsState      domainlights.State
 	schedulerRunning bool
 	schedulerWake    chan struct{}
 }
@@ -76,6 +85,10 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		Logger:            logger,
 	})
 	adapter.Start(ctx)
+	var lights LightsController
+	if controller, ok := interface{}(adapter).(LightsController); ok {
+		lights = controller
+	}
 	app := &App{
 		startedAt:        time.Now().UTC(),
 		cfg:              cfg,
@@ -84,7 +97,9 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		runtimeStatePath: runtimeStatePath(configPath),
 		logger:           logger,
 		adapter:          adapter,
+		lights:           lights,
 		broker:           broker,
+		sleep:            time.Sleep,
 		schedulerWake:    make(chan struct{}, 1),
 	}
 	app.revision = readConfigRevision(configPath)
@@ -105,7 +120,15 @@ func (a *App) HeatingState() domainheating.State {
 }
 
 func (a *App) LightsState() domainlights.State {
-	return domainlights.State{}
+	var state domainlights.State
+	if a.lights != nil {
+		state = a.lights.LightsState()
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	state.FlashInProgress = a.lightsState.FlashInProgress
+	state.LastCommandError = a.lightsState.LastCommandError
+	return state
 }
 
 func (a *App) Health() domainheating.ServiceHealth {
