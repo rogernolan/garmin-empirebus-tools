@@ -53,13 +53,13 @@ func TestMemoryLightsStateTracksExteriorOnOff(t *testing.T) {
 }
 
 type stubLightsController struct {
-	mu          sync.Mutex
-	state       domainlights.State
-	commands    []string
-	errOnOnAt   int
-	errOnOffAt  int
-	ensureOnN   int
-	ensureOffN  int
+	mu         sync.Mutex
+	state      domainlights.State
+	commands   []string
+	errOnOnAt  int
+	errOnOffAt int
+	ensureOnN  int
+	ensureOffN int
 }
 
 func (s *stubLightsController) EnsureExteriorOn(context.Context) error {

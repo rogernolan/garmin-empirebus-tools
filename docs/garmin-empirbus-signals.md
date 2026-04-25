@@ -131,6 +131,10 @@ For all-lights commands observed so far:
 - `data[1]`: always `0`
 - `data[2]`: `3`
 
+Repo usage note:
+
+- the Go service now relies on signals `47` and `48` as exterior-light command targets and exterior-light state indications for `GET /v1/lights/state` and `POST /v1/lights/external/flash`
+
 ## Heating
 
 ### Known commands

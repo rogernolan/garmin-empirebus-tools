@@ -80,6 +80,8 @@ Recommended client wrapper surface:
 - `setHeatingModeOff() async throws -> HeatingRuntimeMode`
 - `setHeatingModeManual(targetCelsius: Double) async throws -> HeatingRuntimeMode`
 - `setHeatingModeBoost(targetCelsius: Double, durationMinutes: Int) async throws -> HeatingRuntimeMode`
+- `fetchLightsState() async throws -> LightsState`
+- `flashExteriorLights(count: Int) async throws -> LightsState`
 
 Recommended editor flow:
 
@@ -102,6 +104,14 @@ Recommended mode-control flow:
 5. for manual mode, call `POST /v1/heating/mode/manual`
 6. for boost, call `POST /v1/heating/mode/boost`
 7. after any successful mode change, replace local mode state with the full response body
+
+Recommended exterior-light flash flow:
+
+1. load current light state with `GET /v1/lights/state`
+2. call `POST /v1/lights/external/flash` with a `count` between `1` and `5`
+3. while a flash is running, treat `409 flash_in_progress` as a temporary busy state
+4. after success, replace local light state with the response body
+5. if the previous exterior state was unknown, the service restores to off after flashing
 
 ## iOS Networking Notes
 
@@ -413,6 +423,85 @@ Mode endpoints currently return ordinary error payloads in the simpler shape:
 }
 ```
 
+## Lights API
+
+The first lights API slice exposes exterior-light state and a flash command for the exterior work lights.
+
+### Get Lights State
+
+Request:
+
+```http
+GET /v1/lights/state
+```
+
+Response:
+
+```json
+{
+  "external_known": true,
+  "external_on": false,
+  "flash_in_progress": false
+}
+```
+
+Fields:
+
+- `external_known`: whether the service has seen exterior light state from Garmin
+- `external_on`: latest known exterior-light state; only meaningful when `external_known` is true
+- `flash_in_progress`: whether a flash sequence is currently running
+- `last_command_error`: optional text from the last failed lights command
+- `last_updated_at`: optional timestamp for the latest exterior-light state update
+
+### Flash Exterior Lights
+
+Request:
+
+```http
+POST /v1/lights/external/flash
+Content-Type: application/json
+```
+
+```json
+{
+  "count": 3
+}
+```
+
+Rules:
+
+- `count` must be between `1` and `5`
+- each flash turns the exterior lights on for `0.5s`, then off for `0.5s`
+- the service rejects overlapping flash requests with `409 Conflict`
+- after flashing, the service attempts to restore the previous exterior state
+- if the previous exterior state was unknown, restore defaults to off
+
+Success response:
+
+```json
+{
+  "external_known": true,
+  "external_on": false,
+  "flash_in_progress": false
+}
+```
+
+Busy response:
+
+```json
+{
+  "error": "flash_in_progress"
+}
+```
+
+Invalid count response:
+
+```json
+{
+  "error": "invalid flash count"
+}
+```
+
 ## Current Validation Rules
 
 The backend currently enforces these schedule rules:
@@ -440,6 +529,7 @@ The backend currently enforces these schedule rules:
 - The mode screen can be modeled independently from the schedule editor
 - `boost` should be shown as a temporary mode with an expiry timestamp, not as a schedule change
 - Returning to schedule mode is explicit through `POST /v1/heating/mode/schedule`
+- Lights flash is runtime control only; it does not change the heating schedule or persisted heating mode
 
 ## Related Server Files
 
@@ -448,3 +538,5 @@ The backend currently enforces these schedule rules:
 - `service/config/config.go`
 - `service/config/runtime_state.go`
 - `service/runtime/mode.go`
+- `service/runtime/lights.go`
+- `service/domains/lights/types.go`
