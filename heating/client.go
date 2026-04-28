@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"time"
+
+	domainheating "empirebus-tests/service/domains/heating"
 )
 
 type Client struct {
@@ -97,8 +99,8 @@ func (c *Client) GetTargetTemp(ctx context.Context) (float64, error) {
 }
 
 func (c *Client) SetTargetTemp(ctx context.Context, target float64) error {
-	if math.Mod(target*10, 5) != 0 {
-		return fmt.Errorf("target %.2f must be in 0.5C increments", target)
+	if err := domainheating.ValidateTargetCelsius(target); err != nil {
+		return err
 	}
 	if err := c.EnsureOn(ctx); err != nil {
 		return err

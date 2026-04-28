@@ -80,15 +80,15 @@ func (a *App) setHeatingMode(ctx context.Context, state config.HeatingRuntimeSta
 	if path == "" {
 		return config.HeatingRuntimeState{}, fmt.Errorf("runtime state path is not configured")
 	}
+	if err := a.applyRuntimeMode(ctx, state); err != nil {
+		return config.HeatingRuntimeState{}, err
+	}
 	if err := config.SaveHeatingRuntimeState(path, state); err != nil {
 		return config.HeatingRuntimeState{}, err
 	}
 	a.mu.Lock()
 	a.modeState = cloneRuntimeState(state)
 	a.mu.Unlock()
-	if err := a.applyRuntimeMode(ctx, state); err != nil {
-		return config.HeatingRuntimeState{}, err
-	}
 	a.logger.Printf("heating mode changed: %s", formatHeatingModeLog(state))
 	a.signalSchedulerWake()
 	a.broker.Publish(events.Event{

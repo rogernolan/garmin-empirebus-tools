@@ -23,6 +23,7 @@ type fakeApp struct {
 	cancelBoostCalled *bool
 	lights            domainlights.State
 	flashLightsErr    error
+	setTargetErr      error
 }
 
 func (f fakeApp) Health() runtime.ServiceHealthView {
@@ -38,7 +39,7 @@ func (f fakeApp) EnsurePower(context.Context, string) error {
 }
 
 func (f fakeApp) SetTargetTemperature(context.Context, float64) error {
-	return nil
+	return f.setTargetErr
 }
 
 func (f fakeApp) HeatingPrograms(time.Time) []runtime.ProgramStatus {
@@ -145,6 +146,19 @@ func TestHandleHeatingScheduleGet(t *testing.T) {
 	}
 	if doc.Revision != "rev-1" {
 		t.Fatalf("got revision %q", doc.Revision)
+	}
+}
+
+func TestHandleHeatingTargetTemperatureMapsValidationErrorToBadRequest(t *testing.T) {
+	server := New(fakeApp{
+		broker:       events.NewBroker(1),
+		setTargetErr: domainheating.ValidateTargetCelsius(25.0),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/heating/target-temperature", bytes.NewBufferString(`{"celsius":25}`))
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

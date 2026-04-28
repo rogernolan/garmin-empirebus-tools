@@ -2,8 +2,10 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,21 +19,24 @@ type fakeHeatingController struct {
 	ensureOnCalls  int
 	ensureOffCalls int
 	setTargetCalls []float64
+	ensureOnErr    error
+	ensureOffErr   error
+	setTargetErr   error
 }
 
 func (f *fakeHeatingController) EnsureOn(context.Context) error {
 	f.ensureOnCalls++
-	return nil
+	return f.ensureOnErr
 }
 
 func (f *fakeHeatingController) EnsureOff(context.Context) error {
 	f.ensureOffCalls++
-	return nil
+	return f.ensureOffErr
 }
 
 func (f *fakeHeatingController) SetTargetTemperature(_ context.Context, celsius float64) error {
 	f.setTargetCalls = append(f.setTargetCalls, celsius)
-	return nil
+	return f.setTargetErr
 }
 
 func (f *fakeHeatingController) CurrentState() HeatingStateView {
@@ -64,6 +69,30 @@ func TestSetHeatingModeManualPersistsAndApplies(t *testing.T) {
 	}
 	if len(adapter.setTargetCalls) != 1 || adapter.setTargetCalls[0] != 19.0 {
 		t.Fatalf("unexpected set target calls %#v", adapter.setTargetCalls)
+	}
+}
+
+func TestSetHeatingModeManualDoesNotPersistWhenApplyFails(t *testing.T) {
+	t.Parallel()
+	adapter := &fakeHeatingController{setTargetErr: errors.New("set target failed")}
+	runtimePath := filepath.Join(t.TempDir(), "runtime.yaml")
+	app := &App{
+		adapter:          adapter,
+		broker:           events.NewBroker(1),
+		logger:           log.New(io.Discard, "", 0),
+		runtimeStatePath: runtimePath,
+		modeState:        config.DefaultHeatingRuntimeState(),
+		schedulerWake:    make(chan struct{}, 1),
+	}
+
+	if _, err := app.SetHeatingModeManual(context.Background(), 19.0); err == nil {
+		t.Fatal("expected apply error")
+	}
+	if app.HeatingMode().Mode != config.HeatingModeSchedule {
+		t.Fatalf("mode persisted in memory after apply failure: %q", app.HeatingMode().Mode)
+	}
+	if _, err := os.Stat(runtimePath); !os.IsNotExist(err) {
+		t.Fatalf("runtime state was persisted after apply failure: %v", err)
 	}
 }
 

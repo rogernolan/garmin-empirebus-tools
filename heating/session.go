@@ -37,6 +37,7 @@ type Session struct {
 	cfg       SessionConfig
 	conn      *websocket.Conn
 	mu        sync.Mutex
+	writeMu   sync.Mutex
 	cond      *sync.Cond
 	state     HeaterState
 	signals   map[int]int
@@ -100,6 +101,9 @@ func (s *Session) Close() error {
 	s.closed = true
 	s.cond.Broadcast()
 	s.mu.Unlock()
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	if s.conn != nil {
 		return s.conn.Close()
 	}
@@ -225,6 +229,14 @@ func (s *Session) sendRaw(raw string) error {
 }
 
 func (s *Session) sendRawAt(raw string) (time.Time, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return time.Time{}, context.Canceled
+	}
 	if s.conn == nil {
 		return time.Time{}, fmt.Errorf("session not connected")
 	}

@@ -37,3 +37,31 @@ func TestHeatingRuntimeStateValidateRejectsMissingManualTarget(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestHeatingRuntimeStateValidateRejectsTargetOutsideSafeRange(t *testing.T) {
+	t.Parallel()
+	for _, target := range []float64{5.0, 25.0} {
+		target := target
+		t.Run("manual", func(t *testing.T) {
+			t.Parallel()
+			state := HeatingRuntimeState{Mode: HeatingModeManual, ManualTargetCelsius: &target}
+			if err := state.Validate(); err == nil {
+				t.Fatalf("expected validation error for %.1fC", target)
+			}
+		})
+		t.Run("boost", func(t *testing.T) {
+			t.Parallel()
+			state := HeatingRuntimeState{
+				Mode: HeatingModeBoost,
+				Boost: &HeatingBoostState{
+					TargetCelsius: target,
+					ExpiresAt:     time.Now().UTC().Add(time.Hour),
+					ResumeMode:    HeatingModeSchedule,
+				},
+			}
+			if err := state.Validate(); err == nil {
+				t.Fatalf("expected validation error for %.1fC", target)
+			}
+		})
+	}
+}

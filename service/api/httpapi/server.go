@@ -115,6 +115,10 @@ func (s *Server) handleHeatingTargetTemperature(w http.ResponseWriter, r *http.R
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := s.app.SetTargetTemperature(ctx, body.Celsius); err != nil {
+		if isValidationError(err) {
+			writeValidationError(w, err)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -213,6 +217,10 @@ func (s *Server) handleHeatingModeManual(w http.ResponseWriter, r *http.Request)
 	defer cancel()
 	state, err := s.app.SetHeatingModeManual(ctx, body.TargetCelsius)
 	if err != nil {
+		if isValidationError(err) {
+			writeValidationError(w, err)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
@@ -236,6 +244,10 @@ func (s *Server) handleHeatingModeBoost(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	state, err := s.app.SetHeatingModeBoost(ctx, body.TargetCelsius, time.Duration(body.DurationMinutes)*time.Minute)
 	if err != nil {
+		if isValidationError(err) {
+			writeValidationError(w, err)
+			return
+		}
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}

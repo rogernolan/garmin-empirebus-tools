@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	MinTargetCelsius = 5.0
+	MaxTargetCelsius = 25.0
+)
+
 type PowerState string
 
 const (
@@ -51,6 +56,19 @@ type HeatingPeriod struct {
 	TargetCelsius *float64  `json:"target_celsius,omitempty"`
 }
 
+func ValidateTargetCelsius(target float64) error {
+	if math.IsNaN(target) || math.IsInf(target, 0) {
+		return fmt.Errorf("target_celsius must be finite")
+	}
+	if target <= MinTargetCelsius || target >= MaxTargetCelsius {
+		return fmt.Errorf("target_celsius must be greater than %.1fC and less than %.1fC", MinTargetCelsius, MaxTargetCelsius)
+	}
+	if math.Abs(math.Round(target*2)-(target*2)) > 0.000001 {
+		return fmt.Errorf("target_celsius must be in 0.5C increments")
+	}
+	return nil
+}
+
 func (p HeatingPeriod) Validate() error {
 	if err := p.Start.Validate(); err != nil {
 		return fmt.Errorf("start %s: %w", p.Start, err)
@@ -63,6 +81,9 @@ func (p HeatingPeriod) Validate() error {
 	case ModeHeat:
 		if p.TargetCelsius == nil {
 			return fmt.Errorf("heat periods must set target_celsius")
+		}
+		if err := ValidateTargetCelsius(*p.TargetCelsius); err != nil {
+			return err
 		}
 	default:
 		return fmt.Errorf("unsupported mode %q", p.Mode)

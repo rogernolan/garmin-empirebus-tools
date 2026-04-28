@@ -161,6 +161,9 @@ func (a *App) EnsurePower(ctx context.Context, power string) error {
 }
 
 func (a *App) SetTargetTemperature(ctx context.Context, celsius float64) error {
+	if err := domainheating.ValidateTargetCelsius(celsius); err != nil {
+		return err
+	}
 	return a.adapter.SetTargetTemperature(ctx, celsius)
 }
 

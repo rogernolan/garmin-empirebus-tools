@@ -1,6 +1,6 @@
 # Internal HTTP API
 
-Derived from current Go code only. Public authentication, authorization, and TLS behavior are unknown in code; the daemon binds whatever `api.listen` config says.
+Derived from current Go code only. Public authentication, authorization, and TLS behavior are intentionally not implemented in code; the service is designed for a Tailscale-restricted deployment and binds whatever `api.listen` config says.
 
 ## Router
 
@@ -47,10 +47,10 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | Endpoint | Body | Validation source | Notes |
 |---|---|---|---|
 | `POST /v1/heating/power` | `{"state":"on"}` or `{"state":"off"}` | `runtime.App.EnsurePower` | Other strings return an error that HTTP maps to `502`. |
-| `POST /v1/heating/target-temperature` | `{"celsius":20.0}` | `heating.Client.SetTargetTemp` | Must be in `0.5C` increments at hardware client level. Bounds are unknown. |
-| `POST /v1/heating/mode/manual` | `{"target_celsius":19.0}` | `config.HeatingRuntimeState.Validate` plus hardware client | Zero is accepted by JSON decoding and only later subject to hardware behavior; explicit bounds unknown. |
-| `POST /v1/heating/mode/boost` | `{"target_celsius":22.0,"duration_minutes":60}` | `runtime.App.SetHeatingModeBoost` | Duration must be greater than zero. |
-| `PUT /v1/automation/heating-schedule` | `HeatingScheduleDocument` | `config.Config.WithHeatingSchedule`, `Validate` | `revision` is optional; if both current and supplied revisions exist and differ, returns `409`. |
+| `POST /v1/heating/target-temperature` | `{"celsius":20.0}` | `runtime.App.SetTargetTemperature`, `heating.Client.SetTargetTemp` | Must be finite, in `0.5C` increments, greater than `5.0C`, and less than `25.0C`. |
+| `POST /v1/heating/mode/manual` | `{"target_celsius":19.0}` | `config.HeatingRuntimeState.Validate` plus hardware client | `target_celsius` must be finite, in `0.5C` increments, greater than `5.0C`, and less than `25.0C`. |
+| `POST /v1/heating/mode/boost` | `{"target_celsius":22.0,"duration_minutes":60}` | `runtime.App.SetHeatingModeBoost` | Duration must be greater than zero; `target_celsius` uses the same safe range as manual mode. |
+| `PUT /v1/automation/heating-schedule` | `HeatingScheduleDocument` | `config.Config.WithHeatingSchedule`, `Validate` | `revision` is optional; if both current and supplied revisions exist and differ, returns `409`; heat periods use the same safe target range. |
 | `POST /v1/lights/external/flash` | `{"count":1}` | `runtime.App.FlashExteriorLights` | Count must be `1..5`. |
 
 ## Event Types
@@ -78,3 +78,9 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | Websocket client | `heating/*.go` | Garmin websocket session, wire frame parsing, command frames, signal-derived heater state. |
 | Daemon | `cmd/empirebusd/main.go` | Config load, app startup, HTTP server lifecycle. |
 
+## Known Omissions / Design Choices
+
+| Area | Current choice | Rationale / mitigation |
+|---|---|---|
+| API auth and TLS | No in-process authentication, authorization, or TLS middleware. | Deployment assumes the HTTP API is reachable only over the operator's Tailscale network. If the Pi is also reachable on Wi-Fi/Ethernet, bind `api.listen` to a Tailscale-only address or put the service behind a Tailscale-facing local proxy. |
+| Deploy target validation | `scripts/deploy/deploy-on-pi.sh` is an operator-only helper and does not currently harden arbitrary `TARGET_SHA` input before using it as the release directory name. | Treat the script as trusted local operational tooling. For untrusted callers or automation, resolve the argument with `git rev-parse --verify` and use the resulting full commit hash for filesystem paths. |

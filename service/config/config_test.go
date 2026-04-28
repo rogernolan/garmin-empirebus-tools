@@ -97,6 +97,28 @@ func TestValidateRejectsMissingHeatTarget(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsHeatTargetOutsideSafeRange(t *testing.T) {
+	target := 25.0
+	cfg := Config{
+		Garmin: GarminConfig{WSURL: "ws://example", HeartbeatInterval: 4 * time.Second},
+		Automation: AutomationConfig{
+			Timezone: "Europe/London",
+			HeatingPrograms: []HeatingProgramConfig{{
+				ID:   "bad",
+				Days: []string{"mon"},
+				Periods: []HeatingPeriodConfig{
+					{Start: "00:00", Mode: "off"},
+					{Start: "05:30", Mode: "heat", TargetCelsius: &target},
+				},
+			}},
+		},
+		API: APIConfig{Listen: ":8080"},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "target_celsius") {
+		t.Fatalf("expected target validation error, got %v", err)
+	}
+}
+
 func TestValidateRejectsOverlappingProgramDays(t *testing.T) {
 	cfg := Config{
 		Garmin: GarminConfig{WSURL: "ws://example", HeartbeatInterval: 4 * time.Second},

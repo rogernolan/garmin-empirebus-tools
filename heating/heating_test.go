@@ -112,6 +112,25 @@ func TestFrameStringIncludesTargetTemperatureInterpretation(t *testing.T) {
 	}
 }
 
+func TestSetTargetTempRejectsTargetOutsideSafeRange(t *testing.T) {
+	t.Parallel()
+	session := NewSession(SessionConfig{})
+	client := NewClient(session)
+	for _, target := range []float64{5.0, 25.0} {
+		target := target
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			err := client.SetTargetTemp(context.Background(), target)
+			if err == nil {
+				t.Fatalf("expected validation error for %.1fC", target)
+			}
+			if !strings.Contains(err.Error(), "target_celsius") {
+				t.Fatalf("expected target validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestFrameStringIncludesHeatingPowerInterpretation(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

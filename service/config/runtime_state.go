@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
+	domainheating "empirebus-tests/service/domains/heating"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -101,6 +103,9 @@ func (s HeatingRuntimeState) Validate() error {
 		if s.ManualTargetCelsius == nil {
 			return fmt.Errorf("manual mode requires manual_target_celsius")
 		}
+		if err := domainheating.ValidateTargetCelsius(*s.ManualTargetCelsius); err != nil {
+			return err
+		}
 		if s.Boost != nil {
 			return fmt.Errorf("manual mode must not set boost")
 		}
@@ -108,8 +113,16 @@ func (s HeatingRuntimeState) Validate() error {
 		if s.Boost == nil {
 			return fmt.Errorf("boost mode requires boost")
 		}
+		if err := domainheating.ValidateTargetCelsius(s.Boost.TargetCelsius); err != nil {
+			return err
+		}
 		if s.Boost.ResumeMode == HeatingModeBoost {
 			return fmt.Errorf("boost resume_mode must not be boost")
+		}
+		if s.Boost.ResumeManualTargetCelsius != nil {
+			if err := domainheating.ValidateTargetCelsius(*s.Boost.ResumeManualTargetCelsius); err != nil {
+				return fmt.Errorf("resume_manual_target_celsius: %w", err)
+			}
 		}
 	default:
 		return fmt.Errorf("unsupported heating mode %q", s.Mode)
