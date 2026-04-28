@@ -75,6 +75,9 @@ class XturaApi {
 
 const allDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const allDaysKey = [...allDays].sort().join(",");
+const scheduleSlotCount = 4;
+const minimumSlotMinutes = 5;
+const minutesPerDay = 24 * 60;
 const fallbackVisibleSlots = [
   { start: "05:30", mode: "heat", target_celsius: 18 },
   { start: "08:00", mode: "off" },
@@ -296,10 +299,10 @@ function visiblePeriods(program) {
   const periods = program.periods || [];
   const visible = periods
     .filter((period) => !(period.start === "00:00" && period.mode === "off"))
-    .slice(0, 4);
+    .slice(0, scheduleSlotCount);
   const usedStarts = new Set(visible.map((period) => period.start));
   for (const fallback of fallbackVisibleSlots) {
-    if (visible.length >= 4) {
+    if (visible.length >= scheduleSlotCount) {
       break;
     }
     if (!usedStarts.has(fallback.start)) {
@@ -308,18 +311,62 @@ function visiblePeriods(program) {
     }
   }
   visible.sort((a, b) => a.start.localeCompare(b.start));
-  while (visible.length < 4) {
+  while (visible.length < scheduleSlotCount) {
     const previous = visible[visible.length - 1];
     const nextStart = previous ? addMinutes(previous.start, 60) : "06:00";
     visible.push({ start: nextStart, mode: "off" });
   }
+  const normalizedStarts = normalizeSlotStarts(visible.map((period) => timeToMinutes(period.start)), 0);
+  normalizedStarts.forEach((minutes, index) => {
+    visible[index].start = minutesToTime(minutes);
+  });
   return visible;
 }
 
 function addMinutes(start, minutes) {
-  const [hour, minute] = start.split(":").map(Number);
-  const total = ((hour * 60 + minute + minutes) % (24 * 60) + (24 * 60)) % (24 * 60);
+  return minutesToTime(timeToMinutes(start) + minutes);
+}
+
+function timeToMinutes(time) {
+  const [hour, minute] = String(time || "00:00").split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) {
+    return 0;
+  }
+  return Math.min(minutesPerDay - 1, Math.max(0, hour * 60 + minute));
+}
+
+function minutesToTime(minutes) {
+  const total = ((Math.round(minutes) % minutesPerDay) + minutesPerDay) % minutesPerDay;
   return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
+}
+
+function minStartForSlot(index) {
+  return (index + 1) * minimumSlotMinutes;
+}
+
+function maxStartForSlot(index) {
+  return minutesPerDay - ((scheduleSlotCount - index) * minimumSlotMinutes);
+}
+
+function normalizeSlotStarts(starts, editedIndex) {
+  const normalized = starts.map((start, index) => {
+    const fallback = timeToMinutes(fallbackVisibleSlots[index]?.start || addMinutes("06:00", index * 60));
+    const minutes = Number.isFinite(start) ? start : fallback;
+    return Math.min(maxStartForSlot(index), Math.max(minStartForSlot(index), minutes));
+  });
+  normalized[editedIndex] = Math.min(
+    maxStartForSlot(editedIndex),
+    Math.max(minStartForSlot(editedIndex), normalized[editedIndex]),
+  );
+  for (let index = editedIndex - 1; index >= 0; index -= 1) {
+    normalized[index] = Math.min(normalized[index], normalized[index + 1] - minimumSlotMinutes);
+    normalized[index] = Math.max(normalized[index], minStartForSlot(index));
+  }
+  for (let index = editedIndex + 1; index < scheduleSlotCount; index += 1) {
+    normalized[index] = Math.max(normalized[index], normalized[index - 1] + minimumSlotMinutes);
+    normalized[index] = Math.min(normalized[index], maxStartForSlot(index));
+  }
+  return normalized;
 }
 
 function renderSchedule() {
@@ -341,11 +388,12 @@ function renderSchedule() {
     return;
   }
   byId("scheduleState").textContent = "Every day";
-  byId("scheduleDetail").textContent = "Four visible slots. Midnight coverage is saved automatically.";
+  byId("scheduleDetail").textContent = "Each slot ends when the next one starts. The final slot ends at midnight.";
   byId("saveSchedule").disabled = state.requestInFlight;
   visiblePeriods(program).forEach((period, index) => {
     slots.appendChild(scheduleSlot(period, index));
   });
+  updateScheduleEndTimes();
 }
 
 function scheduleSlot(period, index) {
@@ -355,6 +403,10 @@ function scheduleSlot(period, index) {
     <div class="field">
       <label for="slotStart${index}">Start</label>
       <input id="slotStart${index}" name="start" type="time" value="${period.start || ""}">
+    </div>
+    <div class="field">
+      <label>End</label>
+      <div class="end-time" data-end-time>--:--</div>
     </div>
     <div class="field">
       <label for="slotMode${index}">Mode</label>
@@ -368,9 +420,11 @@ function scheduleSlot(period, index) {
       <input id="slotTarget${index}" name="target" type="number" min="5" max="24.5" step="0.5" value="${period.target_celsius || 18}">
     </div>
   `;
+  const start = row.querySelector("[name='start']");
   const mode = row.querySelector("[name='mode']");
   const target = row.querySelector("[name='target']");
   mode.value = period.mode || "off";
+  start.addEventListener("change", () => enforceScheduleStarts(index));
   applyScheduleTargetMode(mode, target);
   mode.addEventListener("change", () => applyScheduleTargetMode(mode, target));
   return row;
@@ -392,13 +446,37 @@ function applyScheduleTargetMode(mode, target) {
   target.value = target.dataset.heatValue || target.value || "18";
 }
 
+function scheduleRows() {
+  return Array.from(document.querySelectorAll(".schedule-slot"));
+}
+
+function enforceScheduleStarts(editedIndex) {
+  const rows = scheduleRows();
+  const starts = rows.map((row) => timeToMinutes(row.querySelector("[name='start']").value));
+  normalizeSlotStarts(starts, editedIndex).forEach((minutes, index) => {
+    rows[index].querySelector("[name='start']").value = minutesToTime(minutes);
+  });
+  updateScheduleEndTimes();
+}
+
+function updateScheduleEndTimes() {
+  const rows = scheduleRows();
+  rows.forEach((row, index) => {
+    const end = index < rows.length - 1
+      ? rows[index + 1].querySelector("[name='start']").value
+      : "00:00";
+    row.querySelector("[data-end-time]").textContent = end || "--:--";
+  });
+}
+
 function scheduleFromForm() {
   const originalProgram = editableProgram(state.schedule);
   if (!originalProgram) {
     throw new Error("Unsupported schedule shape.");
   }
   const periods = [{ start: "00:00", mode: "off" }];
-  document.querySelectorAll(".schedule-slot").forEach((row) => {
+  enforceScheduleStarts(0);
+  scheduleRows().forEach((row) => {
     const start = row.querySelector("[name='start']").value;
     const mode = row.querySelector("[name='mode']").value;
     const period = { start, mode };
