@@ -12,6 +12,16 @@ SERVICE_UNIT_DEST="/etc/systemd/system/empirebusd.service"
 
 cd "${REPO_ROOT}"
 
+is_raspberry_pi() {
+  [[ -r /proc/device-tree/model ]] || return 1
+  tr -d '\0' </proc/device-tree/model | grep -qi "raspberry pi"
+}
+
+if [[ "$(uname -s)" != "Linux" ]] || ! is_raspberry_pi; then
+  echo "deploy-on-pi.sh must be run on a Raspberry Pi Linux host; refusing to install or enable ${SERVICE_NAME} here." >&2
+  exit 1
+fi
+
 if ! command -v "${GO_BIN}" >/dev/null 2>&1; then
   echo "go binary not found: ${GO_BIN}" >&2
   exit 1
@@ -57,8 +67,11 @@ sudo ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 sudo install -m 0644 "${SERVICE_UNIT_SOURCE}" "${SERVICE_UNIT_DEST}"
 sudo chown -R xtura:xtura "${INSTALL_ROOT}" /var/lib/xtura
 
-echo "==> Restarting ${SERVICE_NAME}"
+echo "==> Enabling ${SERVICE_NAME} on boot"
 sudo systemctl daemon-reload
+sudo systemctl enable "${SERVICE_NAME}.service"
+
+echo "==> Restarting ${SERVICE_NAME}"
 sudo systemctl restart "${SERVICE_NAME}.service"
 sudo systemctl --no-pager --full status "${SERVICE_NAME}.service"
 echo "==> Recent ${SERVICE_NAME} logs"
