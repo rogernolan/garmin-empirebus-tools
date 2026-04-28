@@ -75,6 +75,12 @@ class XturaApi {
 
 const allDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
 const allDaysKey = [...allDays].sort().join(",");
+const fallbackVisibleSlots = [
+  { start: "05:30", mode: "heat", target_celsius: 18 },
+  { start: "08:00", mode: "off" },
+  { start: "17:30", mode: "heat", target_celsius: 21 },
+  { start: "22:30", mode: "off" },
+];
 const api = new XturaApi();
 const state = {
   activeTab: "lighting",
@@ -290,12 +296,30 @@ function visiblePeriods(program) {
   const periods = program.periods || [];
   const visible = periods
     .filter((period) => !(period.start === "00:00" && period.mode === "off"))
-    .sort((a, b) => a.start.localeCompare(b.start))
     .slice(0, 4);
+  const usedStarts = new Set(visible.map((period) => period.start));
+  for (const fallback of fallbackVisibleSlots) {
+    if (visible.length >= 4) {
+      break;
+    }
+    if (!usedStarts.has(fallback.start)) {
+      visible.push({ ...fallback });
+      usedStarts.add(fallback.start);
+    }
+  }
+  visible.sort((a, b) => a.start.localeCompare(b.start));
   while (visible.length < 4) {
-    visible.push({ start: "", mode: "off" });
+    const previous = visible[visible.length - 1];
+    const nextStart = previous ? addMinutes(previous.start, 60) : "06:00";
+    visible.push({ start: nextStart, mode: "off" });
   }
   return visible;
+}
+
+function addMinutes(start, minutes) {
+  const [hour, minute] = start.split(":").map(Number);
+  const total = ((hour * 60 + minute + minutes) % (24 * 60) + (24 * 60)) % (24 * 60);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function renderSchedule() {
@@ -347,11 +371,25 @@ function scheduleSlot(period, index) {
   const mode = row.querySelector("[name='mode']");
   const target = row.querySelector("[name='target']");
   mode.value = period.mode || "off";
-  target.disabled = mode.value === "off";
-  mode.addEventListener("change", () => {
-    target.disabled = mode.value === "off";
-  });
+  applyScheduleTargetMode(mode, target);
+  mode.addEventListener("change", () => applyScheduleTargetMode(mode, target));
   return row;
+}
+
+function applyScheduleTargetMode(mode, target) {
+  if (mode.value === "off") {
+    target.dataset.heatValue = target.type === "number" ? target.value : target.dataset.heatValue || "18";
+    target.type = "text";
+    target.value = "-";
+    target.disabled = true;
+    return;
+  }
+  target.disabled = false;
+  target.type = "number";
+  target.min = "5";
+  target.max = "24.5";
+  target.step = "0.5";
+  target.value = target.dataset.heatValue || target.value || "18";
 }
 
 function scheduleFromForm() {
@@ -363,12 +401,9 @@ function scheduleFromForm() {
   document.querySelectorAll(".schedule-slot").forEach((row) => {
     const start = row.querySelector("[name='start']").value;
     const mode = row.querySelector("[name='mode']").value;
-    const target = clampTarget(row.querySelector("[name='target']").value);
-    if (!start) {
-      return;
-    }
     const period = { start, mode };
     if (mode === "heat") {
+      const target = clampTarget(row.querySelector("[name='target']").value);
       period.target_celsius = target;
     }
     periods.push(period);
