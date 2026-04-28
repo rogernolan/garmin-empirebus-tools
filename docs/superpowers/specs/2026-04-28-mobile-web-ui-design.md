@@ -21,6 +21,7 @@ Characteristics:
 - compact panels with large touch targets
 - no decorative imagery or heavy assets
 - plain HTML, CSS, and JavaScript
+- visible product text uses `Xture`, not `XTura`
 
 This should feel like a practical van control panel, not a finished product surface. It should be easy to delete and replace later.
 
