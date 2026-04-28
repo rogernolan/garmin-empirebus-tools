@@ -37,8 +37,20 @@
         <section id="heatingPanel" class="tab-panel" hidden>
           <div class="panel">
             <div class="panel-heading">
-              <h2>Target</h2>
+              <h2>Heating</h2>
               <span id="modeState" class="state-text">Loading</span>
+            </div>
+            <div class="mode-switch" aria-label="Heating mode">
+              <button id="modeOn" class="mode-option" type="button">On</button>
+              <button id="modeSchedule" class="mode-option" type="button">Schedule</button>
+              <button id="modeOff" class="mode-option" type="button">Off</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-heading">
+              <h2>Target</h2>
+              <span id="targetState" class="state-text">Set point</span>
             </div>
             <div class="target-stepper" aria-label="Heating target">
               <button id="targetDown" class="icon-button" type="button" aria-label="Decrease target">-</button>
@@ -53,6 +65,17 @@
             <p id="modeDetail" class="detail-text">Waiting for heating mode.</p>
           </div>
 
+          <div id="boostPanel" class="panel">
+            <button id="boostButton" class="primary-action" type="button">Boost 21C for 1 hour</button>
+            <div id="boostRunning" class="boost-running" hidden>
+              <div>
+                <strong id="boostTarget">21.0C</strong>
+                <span id="boostRemaining">-- remaining</span>
+              </div>
+              <button id="cancelBoostButton" class="secondary-wide" type="button">CANCEL BOOST</button>
+            </div>
+          </div>
+
           <div class="panel">
             <div class="panel-heading">
               <h2>Schedule</h2>
@@ -63,11 +86,6 @@
               <button id="saveSchedule" class="primary-action" type="submit">Save schedule</button>
             </form>
             <p id="scheduleDetail" class="detail-text">Waiting for schedule.</p>
-          </div>
-
-          <div class="panel">
-            <button id="boostButton" class="primary-action" type="button">Boost 21C for 1 hour</button>
-            <button id="cancelBoostButton" class="secondary-wide" type="button" hidden>Cancel boost</button>
           </div>
         </section>
 

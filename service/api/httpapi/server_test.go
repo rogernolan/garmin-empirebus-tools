@@ -315,8 +315,11 @@ func TestHandlerServesStaticJavaScript(t *testing.T) {
 	if ct := rr.Header().Get("Content-Type"); !strings.Contains(ct, "javascript") {
 		t.Fatalf("unexpected content type %q", ct)
 	}
-	if body := rr.Body.String(); !strings.Contains(body, "class XturaApi") {
-		t.Fatalf("javascript body did not contain API client: %s", body)
+	body := rr.Body.String()
+	for _, want := range []string{"class XturaApi", "setHeatingModeSchedule", "setHeatingModeOff"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("javascript body did not contain %q: %s", want, body)
+		}
 	}
 }
 

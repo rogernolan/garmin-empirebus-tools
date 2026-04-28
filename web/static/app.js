@@ -14,6 +14,14 @@ class XturaApi {
     return this.request("/v1/heating/mode");
   }
 
+  async setHeatingModeSchedule() {
+    return this.request("/v1/heating/mode/schedule", { method: "POST" });
+  }
+
+  async setHeatingModeOff() {
+    return this.request("/v1/heating/mode/off", { method: "POST" });
+  }
+
   async setHeatingModeManual(targetCelsius) {
     return this.request("/v1/heating/mode/manual", {
       method: "POST",
@@ -76,6 +84,7 @@ const state = {
   schedule: null,
   scheduleEditable: false,
   requestInFlight: false,
+  countdownRefresh: null,
 };
 
 function byId(id) {
@@ -127,6 +136,7 @@ function render() {
   renderLights();
   renderHeating();
   renderSchedule();
+  syncCountdownRefresh();
 }
 
 function renderLights() {
@@ -151,36 +161,87 @@ function renderLights() {
 function renderHeating() {
   const mode = state.heatingMode;
   const boostButton = byId("boostButton");
+  const boostRunning = byId("boostRunning");
   const cancelBoostButton = byId("cancelBoostButton");
   if (!mode) {
     byId("modeState").textContent = "Loading";
+    byId("targetState").textContent = "Set point";
     byId("modeDetail").textContent = "Waiting for heating mode.";
+    updateModeSwitch("");
     boostButton.disabled = true;
-    cancelBoostButton.hidden = true;
+    boostButton.hidden = false;
+    boostRunning.hidden = true;
     updateTargetValue(18);
     return;
   }
   byId("modeState").textContent = mode.mode || "Unknown";
+  byId("targetState").textContent = "Set point";
+  updateModeSwitch(mode.mode);
   const target = currentTarget();
   updateTargetValue(target);
   if (mode.mode === "boost" && mode.boost) {
-    const expires = new Date(mode.boost.expires_at);
-    byId("modeDetail").textContent = `Boosting to ${formatCelsius(mode.boost.target_celsius)} until ${expires.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`;
-    cancelBoostButton.hidden = false;
+    byId("modeDetail").textContent = "Boost overrides the schedule until it is cancelled or expires.";
+    byId("boostTarget").textContent = formatCelsius(mode.boost.target_celsius);
+    byId("boostRemaining").textContent = boostRemainingText(mode.boost.expires_at);
+    boostButton.hidden = true;
+    boostRunning.hidden = false;
   } else if (mode.mode === "manual") {
     byId("modeDetail").textContent = `Manual target ${formatCelsius(mode.manual_target_celsius)}.`;
-    cancelBoostButton.hidden = true;
+    boostButton.hidden = false;
+    boostRunning.hidden = true;
   } else if (mode.mode === "schedule") {
     byId("modeDetail").textContent = state.heatingState && state.heatingState.target_temperature_known
       ? `Following schedule. Current target ${formatCelsius(state.heatingState.target_temperature_c)}.`
       : "Following schedule.";
-    cancelBoostButton.hidden = true;
+    boostButton.hidden = false;
+    boostRunning.hidden = true;
   } else {
     byId("modeDetail").textContent = "Heating is forced off.";
-    cancelBoostButton.hidden = true;
+    boostButton.hidden = false;
+    boostRunning.hidden = true;
   }
   boostButton.disabled = state.requestInFlight;
   cancelBoostButton.disabled = state.requestInFlight;
+}
+
+function updateModeSwitch(mode) {
+  byId("modeOn").classList.toggle("is-active", mode === "manual" || mode === "boost");
+  byId("modeSchedule").classList.toggle("is-active", mode === "schedule");
+  byId("modeOff").classList.toggle("is-active", mode === "off");
+  byId("modeOn").disabled = state.requestInFlight;
+  byId("modeSchedule").disabled = state.requestInFlight;
+  byId("modeOff").disabled = state.requestInFlight;
+}
+
+function boostRemainingText(expiresAt) {
+  const remainingMs = new Date(expiresAt).getTime() - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    return "expires soon";
+  }
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const remainder = minutes % 60;
+    return `${hours}h ${remainder}m remaining`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, "0")} remaining`;
+}
+
+function syncCountdownRefresh() {
+  const hasActiveBoost = Boolean(state.heatingMode && state.heatingMode.mode === "boost" && state.heatingMode.boost);
+  if (hasActiveBoost && state.countdownRefresh === null) {
+    state.countdownRefresh = window.setInterval(() => {
+      if (state.heatingMode && state.heatingMode.mode === "boost" && state.heatingMode.boost) {
+        byId("boostRemaining").textContent = boostRemainingText(state.heatingMode.boost.expires_at);
+      }
+    }, 1000);
+  }
+  if (!hasActiveBoost && state.countdownRefresh !== null) {
+    window.clearInterval(state.countdownRefresh);
+    state.countdownRefresh = null;
+  }
 }
 
 function currentTarget() {
@@ -383,9 +444,9 @@ function connectEvents() {
 }
 
 function bindActions() {
- byId("lightingTab").addEventListener("click", () => setActiveTab("lighting"));
- byId("heatingTab").addEventListener("click", () => setActiveTab("heating"));
- byId("flashLights").addEventListener("click", async () => {
+  byId("lightingTab").addEventListener("click", () => setActiveTab("lighting"));
+  byId("heatingTab").addEventListener("click", () => setActiveTab("heating"));
+  byId("flashLights").addEventListener("click", async () => {
     try {
       const lights = await withRequest(() => api.flashExteriorLights(1), "Flashing exterior lights");
       state.lights = lights;
@@ -402,6 +463,30 @@ function bindActions() {
         return;
       }
     });
+  });
+  byId("modeOn").addEventListener("click", async () => {
+    try {
+      const mode = await withRequest(() => api.setHeatingModeManual(currentTarget()), "Turning heating on");
+      state.heatingMode = mode;
+    } catch (_) {
+      return;
+    }
+  });
+  byId("modeSchedule").addEventListener("click", async () => {
+    try {
+      const mode = await withRequest(() => api.setHeatingModeSchedule(), "Resuming schedule");
+      state.heatingMode = mode;
+    } catch (_) {
+      return;
+    }
+  });
+  byId("modeOff").addEventListener("click", async () => {
+    try {
+      const mode = await withRequest(() => api.setHeatingModeOff(), "Turning heating off");
+      state.heatingMode = mode;
+    } catch (_) {
+      return;
+    }
   });
   byId("targetDown").addEventListener("click", () => adjustTarget(-0.5));
   byId("targetUp").addEventListener("click", () => adjustTarget(0.5));
