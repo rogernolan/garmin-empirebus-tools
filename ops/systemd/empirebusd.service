@@ -14,7 +14,6 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 PrivateTmp=true
 
 [Install]
