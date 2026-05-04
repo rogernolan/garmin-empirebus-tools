@@ -72,6 +72,13 @@ func TestSetHeatingModeManualPersistsAndApplies(t *testing.T) {
 	}
 }
 
+func TestTimezoneFromLocaltimeTarget(t *testing.T) {
+	t.Parallel()
+	if got := timezoneFromLocaltimeTarget("../usr/share/zoneinfo/Europe/Rome"); got != "Europe/Rome" {
+		t.Fatalf("got timezone %q", got)
+	}
+}
+
 func TestSetHeatingModeManualDoesNotPersistWhenApplyFails(t *testing.T) {
 	t.Parallel()
 	adapter := &fakeHeatingController{setTargetErr: errors.New("set target failed")}

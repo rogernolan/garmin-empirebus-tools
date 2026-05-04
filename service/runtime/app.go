@@ -357,11 +357,32 @@ func (a *App) currentAutomationTimezone() string {
 }
 
 func currentSystemTimezone() string {
+	if target, err := os.Readlink("/etc/localtime"); err == nil {
+		if timezoneName := timezoneFromLocaltimeTarget(target); timezoneName != "" {
+			return timezoneName
+		}
+	}
 	data, err := os.ReadFile("/etc/timezone")
 	if err == nil && strings.TrimSpace(string(data)) != "" {
 		return strings.TrimSpace(string(data))
 	}
 	return time.Local.String()
+}
+
+func timezoneFromLocaltimeTarget(target string) string {
+	const marker = "zoneinfo/"
+	index := strings.LastIndex(target, marker)
+	if index < 0 {
+		return ""
+	}
+	timezoneName := strings.TrimSpace(target[index+len(marker):])
+	if timezoneName == "" {
+		return ""
+	}
+	if _, err := time.LoadLocation(timezoneName); err != nil {
+		return ""
+	}
+	return timezoneName
 }
 
 func timezoneUpdateMode(cfg config.TimezoneUpdateConfig) string {
