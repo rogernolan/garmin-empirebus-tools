@@ -15,6 +15,8 @@ type State struct {
 	Provider           string     `json:"provider,omitempty"`
 	Latitude           float64    `json:"latitude"`
 	Longitude          float64    `json:"longitude"`
+	IsMoving           bool       `json:"is_moving"`
+	MovementMeters     float64    `json:"movement_meters,omitempty"`
 	Timezone           string     `json:"timezone,omitempty"`
 	SystemTimezone     string     `json:"system_timezone,omitempty"`
 	TimezoneUpdatedAt  *time.Time `json:"timezone_updated_at,omitempty"`

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"strings"
@@ -64,6 +65,7 @@ type App struct {
 	mu               sync.RWMutex
 	lightsState      domainlights.State
 	locationState    domainlocation.State
+	locationFixes    []domainlocation.Fix
 	lastTimezoneSync time.Time
 	schedulerRunning bool
 	schedulerWake    chan struct{}
@@ -264,12 +266,17 @@ func (a *App) pollLocation(ctx context.Context) {
 		}
 	}
 	a.mu.Lock()
+	a.locationFixes = recentLocationFixes(append(a.locationFixes, fix), fix.UpdatedAt, a.cfg.Location.Movement.Window)
+	movementMeters := cumulativeMovementMeters(a.locationFixes)
+	isMoving := movementMeters >= a.cfg.Location.Movement.MinDistanceMeters
 	a.locationState = domainlocation.State{
 		Configured:         true,
 		Known:              true,
 		Provider:           a.cfg.Location.Provider,
 		Latitude:           fix.Latitude,
 		Longitude:          fix.Longitude,
+		IsMoving:           isMoving,
+		MovementMeters:     movementMeters,
 		Timezone:           timezoneName,
 		SystemTimezone:     currentSystemTimezone(),
 		TimezoneUpdatedAt:  timezoneUpdatedAt,
@@ -281,6 +288,43 @@ func (a *App) pollLocation(ctx context.Context) {
 		a.locationState.LastErrorAt = &now
 	}
 	a.mu.Unlock()
+}
+
+func recentLocationFixes(fixes []domainlocation.Fix, now time.Time, window time.Duration) []domainlocation.Fix {
+	if window <= 0 {
+		window = 15 * time.Minute
+	}
+	cutoff := now.Add(-window)
+	start := 0
+	for start < len(fixes) && fixes[start].UpdatedAt.Before(cutoff) {
+		start++
+	}
+	out := append([]domainlocation.Fix(nil), fixes[start:]...)
+	return out
+}
+
+func cumulativeMovementMeters(fixes []domainlocation.Fix) float64 {
+	var total float64
+	for i := 1; i < len(fixes); i++ {
+		total += distanceMeters(fixes[i-1], fixes[i])
+	}
+	return total
+}
+
+func distanceMeters(a, b domainlocation.Fix) float64 {
+	const earthRadiusMeters = 6371000
+	lat1 := degreesToRadians(a.Latitude)
+	lat2 := degreesToRadians(b.Latitude)
+	dLat := degreesToRadians(b.Latitude - a.Latitude)
+	dLon := degreesToRadians(b.Longitude - a.Longitude)
+	sinLat := math.Sin(dLat / 2)
+	sinLon := math.Sin(dLon / 2)
+	h := sinLat*sinLat + math.Cos(lat1)*math.Cos(lat2)*sinLon*sinLon
+	return 2 * earthRadiusMeters * math.Asin(math.Sqrt(h))
+}
+
+func degreesToRadians(degrees float64) float64 {
+	return degrees * math.Pi / 180
 }
 
 func (a *App) maybeUpdateTimezone(ctx context.Context, timezoneName string, now time.Time) (bool, error) {

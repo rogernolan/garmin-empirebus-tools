@@ -33,6 +33,7 @@ type LocationConfig struct {
 	RUTX50         RUTX50LocationConfig `yaml:"rutx50,omitempty"`
 	Timezone       TimezoneLookupConfig `yaml:"timezone,omitempty"`
 	TimezoneUpdate TimezoneUpdateConfig `yaml:"timezone_update,omitempty"`
+	Movement       MovementConfig       `yaml:"movement,omitempty"`
 }
 
 type RUTX50LocationConfig struct {
@@ -57,6 +58,11 @@ type TimezoneUpdateConfig struct {
 	Interval     time.Duration `yaml:"interval,omitempty"`
 	Command      []string      `yaml:"command,omitempty"`
 	UpdateConfig bool          `yaml:"update_config,omitempty"`
+}
+
+type MovementConfig struct {
+	Window            time.Duration `yaml:"window,omitempty"`
+	MinDistanceMeters float64       `yaml:"min_distance_meters,omitempty"`
 }
 
 type AutomationConfig struct {
@@ -114,6 +120,7 @@ type NormalizedLocation struct {
 	RUTX50         RUTX50LocationConfig
 	Timezone       TimezoneLookupConfig
 	TimezoneUpdate TimezoneUpdateConfig
+	Movement       MovementConfig
 }
 
 type NormalizedAutomation struct {
@@ -200,6 +207,12 @@ func (c Config) Validate() error {
 		}
 		if c.Location.TimezoneUpdate.Enabled && !c.Location.TimezoneUpdate.UpdateConfig && len(c.Location.TimezoneUpdate.Command) == 0 {
 			problems = append(problems, "location.timezone_update.command is required unless location.timezone_update.update_config is true")
+		}
+		if c.Location.Movement.Window < 0 {
+			problems = append(problems, "location.movement.window must not be negative")
+		}
+		if c.Location.Movement.MinDistanceMeters < 0 {
+			problems = append(problems, "location.movement.min_distance_meters must not be negative")
 		}
 	}
 	if strings.TrimSpace(c.Automation.Timezone) == "" {
@@ -305,6 +318,10 @@ func normalizeLocation(in LocationConfig) NormalizedLocation {
 			Command:      append([]string(nil), in.TimezoneUpdate.Command...),
 			UpdateConfig: in.TimezoneUpdate.UpdateConfig,
 		},
+		Movement: MovementConfig{
+			Window:            in.Movement.Window,
+			MinDistanceMeters: in.Movement.MinDistanceMeters,
+		},
 	}
 	if out.Provider == "" {
 		out.Provider = "rutx50"
@@ -329,6 +346,12 @@ func normalizeLocation(in LocationConfig) NormalizedLocation {
 	}
 	if out.TimezoneUpdate.Interval == 0 {
 		out.TimezoneUpdate.Interval = time.Hour
+	}
+	if out.Movement.Window == 0 {
+		out.Movement.Window = 15 * time.Minute
+	}
+	if out.Movement.MinDistanceMeters == 0 {
+		out.Movement.MinDistanceMeters = 250
 	}
 	return out
 }

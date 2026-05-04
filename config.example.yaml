@@ -23,6 +23,11 @@ location:
     # Uses local GPS coordinate lookup via github.com/ringsaturn/tzf by default.
     provider: tzf
     timeout: 10s
+  movement:
+    # Reports is_moving when cumulative GPS displacement in this window crosses
+    # the threshold. This is intentionally coarse for automation rules.
+    window: 15m
+    min_distance_meters: 250
   timezone_update:
     enabled: true
     interval: 1h

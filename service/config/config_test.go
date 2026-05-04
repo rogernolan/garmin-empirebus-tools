@@ -121,6 +121,12 @@ func TestNormalizeLocationDefaultsRUTX50(t *testing.T) {
 	if normalized.Location.Timezone.Provider != "tzf" {
 		t.Fatalf("got timezone provider %q", normalized.Location.Timezone.Provider)
 	}
+	if normalized.Location.Movement.Window != 15*time.Minute {
+		t.Fatalf("got movement window %s", normalized.Location.Movement.Window)
+	}
+	if normalized.Location.Movement.MinDistanceMeters != 250 {
+		t.Fatalf("got movement distance %f", normalized.Location.Movement.MinDistanceMeters)
+	}
 }
 
 func TestValidateRejectsTimezoneUpdateWithoutAction(t *testing.T) {

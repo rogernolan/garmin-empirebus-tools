@@ -39,6 +39,19 @@ sudo install -o xtura -g xtura -m 0600 /dev/stdin /var/lib/xtura/rutx50-password
 
 The provider expects a JSON response containing latitude and longitude fields. It accepts common key names such as `latitude`/`longitude`, `lat`/`lon`, and nested objects. On the tested RUTX50, `GET /api/gps/status` returned only service metadata (`uptime` and `dpo_support`), while `GET /api/gps/position/status` returned `latitude` and `longitude`.
 
+## Movement Signal
+
+The service infers a coarse `is_moving` signal from GPS displacement. It keeps recent fixes in memory and sums the distance between consecutive fixes inside a configurable window:
+
+```yaml
+location:
+  movement:
+    window: 15m
+    min_distance_meters: 250
+```
+
+With the default `poll_interval: 5m`, this gives a movement signal that is intentionally accurate over minutes rather than seconds. It is meant for automation rules such as disabling equipment while the vehicle is moving, not for displaying live driving speed. The state also includes `movement_meters`, the cumulative displacement currently used for the decision.
+
 ## Timezone Lookup
 
 By default, coordinates are resolved locally with [`github.com/ringsaturn/tzf`](https://github.com/ringsaturn/tzf). This avoids relying on an external timezone API while the vehicle is travelling.
@@ -103,6 +116,8 @@ The systemd service runs as `xtura`. The deploy script installs [ops/sudoers/xtu
   "provider": "rutx50",
   "latitude": 51.5007,
   "longitude": -0.1246,
+  "is_moving": true,
+  "movement_meters": 410.2,
   "timezone": "Europe/London",
   "system_timezone": "Europe/London",
   "last_updated_at": "2026-05-03T18:30:00Z",
