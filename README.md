@@ -55,10 +55,12 @@ The sample config includes:
 
 - the everyday morning heating schedule from `05:30` to `08:00`
 - a commented short test pattern you can edit for quick live verification
+- optional RUTX50-backed GPS location polling and timezone updates
 
 Current HTTP endpoints:
 
 - `GET /v1/health`
+- `GET /v1/location/state`
 - `GET /v1/heating/state`
 - `GET /v1/heating/mode`
 - `POST /v1/heating/mode/schedule`
@@ -73,12 +75,15 @@ Current HTTP endpoints:
 - `PUT /v1/automation/heating-schedule`
 - `GET /v1/events`
 
+The location service defaults to the Teltonika RUTX50 GPS position endpoint at `http://192.168.51.1/api/gps/position/status` when `location.enabled` is true. It exposes the latest longitude, latitude, and timezone at `GET /v1/location/state`; see [location-service.md](docs/location-service.md) for the RUTX50 endpoint config, timezone lookup, and Pi timezone update setup.
+
 Current design notes live in:
 
 - [2026-04-21-empirebus-service-design.md](docs/superpowers/specs/2026-04-21-empirebus-service-design.md)
 - [2026-04-21-heating-go-client-design.md](docs/superpowers/specs/2026-04-21-heating-go-client-design.md)
 - [heating-schedule-api.md](docs/heating-schedule-api.md)
 - [garmin-empirbus-signals.md](docs/garmin-empirbus-signals.md)
+- [location-service.md](docs/location-service.md)
 
 ## Deployment
 

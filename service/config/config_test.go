@@ -76,6 +76,75 @@ func TestValidateAllowsAdjacentPeriodsWithSameEffectiveState(t *testing.T) {
 	}
 }
 
+func TestNormalizeLocationDefaultsRUTX50(t *testing.T) {
+	cfg := Config{
+		Garmin: GarminConfig{WSURL: "ws://example", HeartbeatInterval: 4 * time.Second},
+		Location: LocationConfig{
+			Enabled: true,
+			RUTX50: RUTX50LocationConfig{
+				InsecureSkipVerify: true,
+			},
+			TimezoneUpdate: TimezoneUpdateConfig{
+				Enabled:      true,
+				UpdateConfig: true,
+			},
+		},
+		Automation: AutomationConfig{
+			Timezone: "Europe/London",
+			HeatingPrograms: []HeatingProgramConfig{{
+				ID:      "weekday",
+				Days:    []string{"mon"},
+				Periods: []HeatingPeriodConfig{{Start: "00:00", Mode: "off"}},
+			}},
+		},
+		API: APIConfig{Listen: ":8080"},
+	}
+	normalized, err := cfg.Normalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !normalized.Location.Enabled {
+		t.Fatal("expected location to be enabled")
+	}
+	if normalized.Location.Provider != "rutx50" {
+		t.Fatalf("got provider %q", normalized.Location.Provider)
+	}
+	if normalized.Location.RUTX50.Endpoint != "http://192.168.51.1/api/gps/position/status" {
+		t.Fatalf("got endpoint %q", normalized.Location.RUTX50.Endpoint)
+	}
+	if normalized.Location.RUTX50.LoginEndpoint != "http://192.168.51.1/api/login" {
+		t.Fatalf("got login endpoint %q", normalized.Location.RUTX50.LoginEndpoint)
+	}
+	if normalized.Location.PollInterval != 5*time.Minute {
+		t.Fatalf("got poll interval %s", normalized.Location.PollInterval)
+	}
+	if normalized.Location.Timezone.Provider != "tzf" {
+		t.Fatalf("got timezone provider %q", normalized.Location.Timezone.Provider)
+	}
+}
+
+func TestValidateRejectsTimezoneUpdateWithoutAction(t *testing.T) {
+	cfg := Config{
+		Garmin: GarminConfig{WSURL: "ws://example", HeartbeatInterval: 4 * time.Second},
+		Location: LocationConfig{
+			Enabled:        true,
+			TimezoneUpdate: TimezoneUpdateConfig{Enabled: true},
+		},
+		Automation: AutomationConfig{
+			Timezone: "Europe/London",
+			HeatingPrograms: []HeatingProgramConfig{{
+				ID:      "weekday",
+				Days:    []string{"mon"},
+				Periods: []HeatingPeriodConfig{{Start: "00:00", Mode: "off"}},
+			}},
+		},
+		API: APIConfig{Listen: ":8080"},
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "location.timezone_update.command") {
+		t.Fatalf("expected timezone update validation error, got %v", err)
+	}
+}
+
 func TestValidateRejectsMissingHeatTarget(t *testing.T) {
 	cfg := Config{
 		Garmin: GarminConfig{WSURL: "ws://example", HeartbeatInterval: 4 * time.Second},

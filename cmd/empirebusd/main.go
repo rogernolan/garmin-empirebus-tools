@@ -46,6 +46,16 @@ func main() {
 		normalized.Garmin.HeartbeatInterval,
 		normalized.Garmin.TraceWindow,
 	)
+	if normalized.Location.Enabled {
+		logger.Printf(
+			"empirebusd location provider: provider=%s endpoint=%s poll_interval=%s timezone_provider=%s timezone_update=%t",
+			normalized.Location.Provider,
+			normalized.Location.RUTX50.Endpoint,
+			normalized.Location.PollInterval,
+			normalized.Location.Timezone.Provider,
+			normalized.Location.TimezoneUpdate.Enabled,
+		)
+	}
 	server := &http.Server{
 		Addr:              normalized.API.Listen,
 		Handler:           httpapi.New(app).Handler(),

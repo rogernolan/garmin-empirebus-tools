@@ -12,6 +12,7 @@ import (
 	"empirebus-tests/service/api/events"
 	"empirebus-tests/service/config"
 	domainlights "empirebus-tests/service/domains/lights"
+	domainlocation "empirebus-tests/service/domains/location"
 	"empirebus-tests/service/runtime"
 )
 
@@ -36,6 +37,7 @@ type Application interface {
 	UpdateHeatingSchedule(context.Context, config.HeatingScheduleDocument) (config.HeatingScheduleDocument, error)
 	LightsState() domainlights.State
 	FlashExteriorLights(context.Context, int) error
+	LocationState() domainlocation.State
 	Broker() *events.Broker
 }
 
@@ -59,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/automation/heating-schedule", s.handleHeatingSchedule)
 	mux.HandleFunc("/v1/lights/state", s.handleLightsState)
 	mux.HandleFunc("/v1/lights/external/flash", s.handleExteriorFlash)
+	mux.HandleFunc("/v1/location/state", s.handleLocationState)
 	mux.HandleFunc("/v1/events", s.handleEvents)
 	registerStaticRoutes(mux)
 	return mux
@@ -304,6 +307,14 @@ func (s *Server) handleExteriorFlash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.app.LightsState())
+}
+
+func (s *Server) handleLocationState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.LocationState())
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {

@@ -15,6 +15,7 @@ import (
 	"empirebus-tests/service/config"
 	domainheating "empirebus-tests/service/domains/heating"
 	domainlights "empirebus-tests/service/domains/lights"
+	domainlocation "empirebus-tests/service/domains/location"
 	"empirebus-tests/service/runtime"
 )
 
@@ -24,6 +25,7 @@ type fakeApp struct {
 	mode              config.HeatingRuntimeState
 	cancelBoostCalled *bool
 	lights            domainlights.State
+	location          domainlocation.State
 	flashLightsErr    error
 	setTargetErr      error
 }
@@ -89,6 +91,10 @@ func (f fakeApp) LightsState() domainlights.State {
 
 func (f fakeApp) FlashExteriorLights(context.Context, int) error {
 	return f.flashLightsErr
+}
+
+func (f fakeApp) LocationState() domainlocation.State {
+	return f.location
 }
 
 func (f fakeApp) Broker() *events.Broker {
@@ -285,6 +291,33 @@ func TestHandleExteriorFlashRejectsInvalidCount(t *testing.T) {
 	server.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleLocationStateGet(t *testing.T) {
+	server := New(fakeApp{
+		broker: events.NewBroker(1),
+		location: domainlocation.State{
+			Configured: true,
+			Known:      true,
+			Provider:   "rutx50",
+			Latitude:   51.5,
+			Longitude:  -0.12,
+			Timezone:   "Europe/London",
+		},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/location/state", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got status %d", rr.Code)
+	}
+	var state domainlocation.State
+	if err := json.Unmarshal(rr.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.Configured || !state.Known || state.Provider != "rutx50" || state.Timezone != "Europe/London" {
+		t.Fatalf("unexpected location state: %+v", state)
 	}
 }
 

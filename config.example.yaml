@@ -4,6 +4,34 @@ garmin:
   # origin: http://192.168.1.1
   trace_window: 3s
 
+location:
+  enabled: true
+  # Defaults to the Teltonika RUTX50 GPS status API.
+  provider: rutx50
+  poll_interval: 5m
+  rutx50:
+    endpoint: http://192.168.51.1/api/gps/position/status
+    login_endpoint: http://192.168.51.1/api/login
+    username: admin
+    # Prefer password_file over putting the router password in this config.
+    # password_file: /var/lib/xtura/rutx50-password
+    # Set this true only if using the HTTPS API with a self-signed device certificate.
+    insecure_skip_verify: false
+    timeout: 10s
+    # auth_token: optional fixed bearer token instead of username/password login
+  timezone:
+    # Uses local GPS coordinate lookup via github.com/ringsaturn/tzf by default.
+    provider: tzf
+    timeout: 10s
+  timezone_update:
+    enabled: true
+    interval: 1h
+    # Keep the heating schedule timezone in /var/lib/xtura/config.yaml in step
+    # with the resolved GPS timezone.
+    update_config: true
+    # The deploy script installs a narrow sudoers rule for this command.
+    command: ["sudo", "/usr/bin/timedatectl", "set-timezone"]
+
 automation:
   timezone: Europe/London
   heating_programs:

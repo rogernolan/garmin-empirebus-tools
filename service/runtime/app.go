@@ -6,16 +6,21 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"empirebus-tests/service/adapters/garmin"
+	"empirebus-tests/service/adapters/geotimezone"
+	"empirebus-tests/service/adapters/teltonika"
+	"empirebus-tests/service/adapters/tzfresolver"
 	"empirebus-tests/service/api/events"
 	"empirebus-tests/service/automation/scheduler"
 	"empirebus-tests/service/config"
 	domainheating "empirebus-tests/service/domains/heating"
 	domainlights "empirebus-tests/service/domains/lights"
+	domainlocation "empirebus-tests/service/domains/location"
 )
 
 type HeatingController interface {
@@ -32,6 +37,14 @@ type LightsController interface {
 	LightsState() domainlights.State
 }
 
+type LocationProvider interface {
+	Poll(context.Context) (domainlocation.Fix, error)
+}
+
+type TimezoneResolver interface {
+	Timezone(context.Context, float64, float64) (string, error)
+}
+
 type App struct {
 	startedAt        time.Time
 	cfg              config.NormalizedConfig
@@ -43,17 +56,22 @@ type App struct {
 	logger           *log.Logger
 	adapter          HeatingController
 	lights           LightsController
+	location         LocationProvider
+	timezoneResolver TimezoneResolver
 	broker           *events.Broker
 	sleep            func(time.Duration)
 
 	mu               sync.RWMutex
 	lightsState      domainlights.State
+	locationState    domainlocation.State
+	lastTimezoneSync time.Time
 	schedulerRunning bool
 	schedulerWake    chan struct{}
 }
 
 type HeatingStateView = domainheating.State
 type ServiceHealthView = domainheating.ServiceHealth
+type LocationStateView = domainlocation.State
 
 var ErrScheduleRevisionConflict = errors.New("schedule revision conflict")
 
@@ -89,6 +107,30 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 	if controller, ok := interface{}(adapter).(LightsController); ok {
 		lights = controller
 	}
+	var location LocationProvider
+	var timezoneResolver TimezoneResolver
+	if cfg.Location.Enabled {
+		location = teltonika.NewRUTX50(teltonika.RUTX50Config{
+			Endpoint:           cfg.Location.RUTX50.Endpoint,
+			LoginEndpoint:      cfg.Location.RUTX50.LoginEndpoint,
+			Username:           cfg.Location.RUTX50.Username,
+			Password:           cfg.Location.RUTX50.Password,
+			PasswordFile:       cfg.Location.RUTX50.PasswordFile,
+			AuthToken:          cfg.Location.RUTX50.AuthToken,
+			InsecureSkipVerify: cfg.Location.RUTX50.InsecureSkipVerify,
+			Timeout:            cfg.Location.RUTX50.Timeout,
+		})
+		if cfg.Location.Timezone.Provider == "tzf" {
+			resolver, err := tzfresolver.New()
+			if err != nil {
+				return nil, err
+			}
+			timezoneResolver = resolver
+		}
+		if cfg.Location.Timezone.Provider == "geotimezone" {
+			timezoneResolver = geotimezone.New(cfg.Location.Timezone.Endpoint, cfg.Location.Timezone.Timeout)
+		}
+	}
 	app := &App{
 		startedAt:        time.Now().UTC(),
 		cfg:              cfg,
@@ -98,6 +140,8 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		logger:           logger,
 		adapter:          adapter,
 		lights:           lights,
+		location:         location,
+		timezoneResolver: timezoneResolver,
 		broker:           broker,
 		sleep:            time.Sleep,
 		schedulerWake:    make(chan struct{}, 1),
@@ -106,7 +150,16 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 	if err := app.loadRuntimeState(); err != nil {
 		return nil, err
 	}
+	app.locationState = domainlocation.State{
+		Configured:         cfg.Location.Enabled,
+		Provider:           cfg.Location.Provider,
+		SystemTimezone:     currentSystemTimezone(),
+		TimezoneUpdateMode: timezoneUpdateMode(cfg.Location.TimezoneUpdate),
+	}
 	go app.publishStateLoop(ctx)
+	if cfg.Location.Enabled {
+		go app.locationLoop(ctx)
+	}
 	go app.schedulerLoop(ctx)
 	return app, nil
 }
@@ -131,6 +184,12 @@ func (a *App) LightsState() domainlights.State {
 	return state
 }
 
+func (a *App) LocationState() domainlocation.State {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.locationState
+}
+
 func (a *App) Health() domainheating.ServiceHealth {
 	garminHealth := a.adapter.Health()
 	status := "ok"
@@ -147,6 +206,175 @@ func (a *App) Health() domainheating.ServiceHealth {
 		SchedulerRunning: schedulerRunning,
 		ConfigLoaded:     true,
 	}
+}
+
+func (a *App) locationLoop(ctx context.Context) {
+	a.pollLocation(ctx)
+	ticker := time.NewTicker(a.cfg.Location.PollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.pollLocation(ctx)
+		}
+	}
+}
+
+func (a *App) pollLocation(ctx context.Context) {
+	if a.location == nil {
+		return
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, a.cfg.Location.RUTX50.Timeout)
+	defer cancel()
+	fix, err := a.location.Poll(pollCtx)
+	now := time.Now().UTC()
+	if err != nil {
+		a.mu.Lock()
+		a.locationState.Configured = true
+		a.locationState.Provider = a.cfg.Location.Provider
+		a.locationState.LastError = err.Error()
+		a.locationState.LastErrorAt = &now
+		a.locationState.SystemTimezone = currentSystemTimezone()
+		a.locationState.TimezoneUpdateMode = timezoneUpdateMode(a.cfg.Location.TimezoneUpdate)
+		a.mu.Unlock()
+		a.logger.Printf("location poll failed: %v", err)
+		return
+	}
+	timezoneName := a.currentAutomationTimezone()
+	if a.timezoneResolver != nil {
+		resolveCtx, resolveCancel := context.WithTimeout(ctx, a.cfg.Location.Timezone.Timeout)
+		resolved, resolveErr := a.timezoneResolver.Timezone(resolveCtx, fix.Latitude, fix.Longitude)
+		resolveCancel()
+		if resolveErr != nil {
+			err = fmt.Errorf("timezone lookup: %w", resolveErr)
+			a.logger.Printf("location timezone lookup failed: %v", err)
+		} else {
+			timezoneName = resolved
+		}
+	}
+	var timezoneUpdatedAt *time.Time
+	if err == nil && timezoneName != "" {
+		if updated, updateErr := a.maybeUpdateTimezone(ctx, timezoneName, now); updateErr != nil {
+			err = fmt.Errorf("timezone update: %w", updateErr)
+			a.logger.Printf("location timezone update failed: %v", err)
+		} else if updated {
+			timezoneUpdatedAt = &now
+		}
+	}
+	a.mu.Lock()
+	a.locationState = domainlocation.State{
+		Configured:         true,
+		Known:              true,
+		Provider:           a.cfg.Location.Provider,
+		Latitude:           fix.Latitude,
+		Longitude:          fix.Longitude,
+		Timezone:           timezoneName,
+		SystemTimezone:     currentSystemTimezone(),
+		TimezoneUpdatedAt:  timezoneUpdatedAt,
+		LastUpdatedAt:      &fix.UpdatedAt,
+		TimezoneUpdateMode: timezoneUpdateMode(a.cfg.Location.TimezoneUpdate),
+	}
+	if err != nil {
+		a.locationState.LastError = err.Error()
+		a.locationState.LastErrorAt = &now
+	}
+	a.mu.Unlock()
+}
+
+func (a *App) maybeUpdateTimezone(ctx context.Context, timezoneName string, now time.Time) (bool, error) {
+	if _, err := time.LoadLocation(timezoneName); err != nil {
+		return false, err
+	}
+	cfg := a.cfg.Location.TimezoneUpdate
+	if !cfg.Enabled {
+		return false, nil
+	}
+	a.mu.RLock()
+	lastSync := a.lastTimezoneSync
+	currentConfigTZ := a.rawConfig.Automation.Timezone
+	a.mu.RUnlock()
+	if !lastSync.IsZero() && now.Sub(lastSync) < cfg.Interval && currentConfigTZ == timezoneName {
+		return false, nil
+	}
+	if cfg.UpdateConfig && currentConfigTZ != timezoneName {
+		if err := a.updateConfigTimezone(timezoneName); err != nil {
+			return false, err
+		}
+	}
+	if len(cfg.Command) > 0 && currentSystemTimezone() != timezoneName {
+		args := append([]string(nil), cfg.Command[1:]...)
+		args = append(args, timezoneName)
+		runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := exec.CommandContext(runCtx, cfg.Command[0], args...).Run(); err != nil {
+			return false, err
+		}
+	}
+	a.mu.Lock()
+	a.lastTimezoneSync = now
+	a.mu.Unlock()
+	return true, nil
+}
+
+func (a *App) updateConfigTimezone(timezoneName string) error {
+	a.mu.RLock()
+	nextConfig := a.rawConfig
+	configPath := a.configPath
+	a.mu.RUnlock()
+	if strings.TrimSpace(configPath) == "" {
+		return fmt.Errorf("config path is not configured")
+	}
+	nextConfig.Automation.Timezone = timezoneName
+	nextNormalized, err := nextConfig.Normalize()
+	if err != nil {
+		return err
+	}
+	if err := config.SaveFile(configPath, nextConfig); err != nil {
+		return err
+	}
+	revision := readConfigRevision(configPath)
+	a.mu.Lock()
+	a.rawConfig = nextConfig
+	a.cfg = nextNormalized
+	a.revision = revision
+	a.mu.Unlock()
+	a.signalSchedulerWake()
+	out := nextConfig.HeatingScheduleDocument(revision)
+	a.broker.Publish(events.Event{
+		Type:      "automation.schedule_updated",
+		Timestamp: time.Now().UTC(),
+		Payload:   out,
+	})
+	return nil
+}
+
+func (a *App) currentAutomationTimezone() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.rawConfig.Automation.Timezone
+}
+
+func currentSystemTimezone() string {
+	data, err := os.ReadFile("/etc/timezone")
+	if err == nil && strings.TrimSpace(string(data)) != "" {
+		return strings.TrimSpace(string(data))
+	}
+	return time.Local.String()
+}
+
+func timezoneUpdateMode(cfg config.TimezoneUpdateConfig) string {
+	if !cfg.Enabled {
+		return "disabled"
+	}
+	if cfg.UpdateConfig && len(cfg.Command) > 0 {
+		return "config_and_command"
+	}
+	if cfg.UpdateConfig {
+		return "config"
+	}
+	return "command"
 }
 
 func (a *App) EnsurePower(ctx context.Context, power string) error {
@@ -242,6 +470,7 @@ func (a *App) publishStateLoop(ctx context.Context) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 	var last domainheating.State
+	var lastLocation domainlocation.State
 	lastConnected := false
 	for {
 		select {
@@ -264,6 +493,15 @@ func (a *App) publishStateLoop(ctx context.Context) {
 					Type:      "service.connection_changed",
 					Timestamp: time.Now().UTC(),
 					Payload:   health,
+				})
+			}
+			location := a.LocationState()
+			if location != lastLocation {
+				lastLocation = location
+				a.broker.Publish(events.Event{
+					Type:      "location.state_changed",
+					Timestamp: time.Now().UTC(),
+					Payload:   location,
 				})
 			}
 		}

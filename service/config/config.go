@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	Garmin     GarminConfig     `yaml:"garmin"`
+	Location   LocationConfig   `yaml:"location,omitempty"`
 	Automation AutomationConfig `yaml:"automation"`
 	API        APIConfig        `yaml:"api"`
 }
@@ -23,6 +24,39 @@ type GarminConfig struct {
 	Origin            string        `yaml:"origin,omitempty"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
 	TraceWindow       time.Duration `yaml:"trace_window,omitempty"`
+}
+
+type LocationConfig struct {
+	Enabled        bool                 `yaml:"enabled,omitempty"`
+	Provider       string               `yaml:"provider,omitempty"`
+	PollInterval   time.Duration        `yaml:"poll_interval,omitempty"`
+	RUTX50         RUTX50LocationConfig `yaml:"rutx50,omitempty"`
+	Timezone       TimezoneLookupConfig `yaml:"timezone,omitempty"`
+	TimezoneUpdate TimezoneUpdateConfig `yaml:"timezone_update,omitempty"`
+}
+
+type RUTX50LocationConfig struct {
+	Endpoint           string        `yaml:"endpoint,omitempty"`
+	LoginEndpoint      string        `yaml:"login_endpoint,omitempty"`
+	Username           string        `yaml:"username,omitempty"`
+	Password           string        `yaml:"password,omitempty"`
+	PasswordFile       string        `yaml:"password_file,omitempty"`
+	AuthToken          string        `yaml:"auth_token,omitempty"`
+	InsecureSkipVerify bool          `yaml:"insecure_skip_verify,omitempty"`
+	Timeout            time.Duration `yaml:"timeout,omitempty"`
+}
+
+type TimezoneLookupConfig struct {
+	Provider string        `yaml:"provider,omitempty"`
+	Endpoint string        `yaml:"endpoint,omitempty"`
+	Timeout  time.Duration `yaml:"timeout,omitempty"`
+}
+
+type TimezoneUpdateConfig struct {
+	Enabled      bool          `yaml:"enabled,omitempty"`
+	Interval     time.Duration `yaml:"interval,omitempty"`
+	Command      []string      `yaml:"command,omitempty"`
+	UpdateConfig bool          `yaml:"update_config,omitempty"`
 }
 
 type AutomationConfig struct {
@@ -68,8 +102,18 @@ type HeatingSchedulePeriodDocument struct {
 
 type NormalizedConfig struct {
 	Garmin     GarminConfig
+	Location   NormalizedLocation
 	API        APIConfig
 	Automation NormalizedAutomation
+}
+
+type NormalizedLocation struct {
+	Enabled        bool
+	Provider       string
+	PollInterval   time.Duration
+	RUTX50         RUTX50LocationConfig
+	Timezone       TimezoneLookupConfig
+	TimezoneUpdate TimezoneUpdateConfig
 }
 
 type NormalizedAutomation struct {
@@ -127,6 +171,37 @@ func (c Config) Validate() error {
 	if c.Garmin.HeartbeatInterval <= 0 {
 		problems = append(problems, "garmin.heartbeat_interval must be greater than zero")
 	}
+	if c.Location.Enabled {
+		provider := strings.TrimSpace(c.Location.Provider)
+		if provider == "" {
+			provider = "rutx50"
+		}
+		if provider != "rutx50" {
+			problems = append(problems, fmt.Sprintf("location.provider %q is not supported", c.Location.Provider))
+		}
+		if c.Location.PollInterval < 0 {
+			problems = append(problems, "location.poll_interval must not be negative")
+		}
+		if c.Location.RUTX50.Timeout < 0 {
+			problems = append(problems, "location.rutx50.timeout must not be negative")
+		}
+		timezoneProvider := strings.TrimSpace(c.Location.Timezone.Provider)
+		if timezoneProvider == "" {
+			timezoneProvider = "tzf"
+		}
+		if timezoneProvider != "tzf" && timezoneProvider != "geotimezone" && timezoneProvider != "none" {
+			problems = append(problems, fmt.Sprintf("location.timezone.provider %q is not supported", c.Location.Timezone.Provider))
+		}
+		if c.Location.Timezone.Timeout < 0 {
+			problems = append(problems, "location.timezone.timeout must not be negative")
+		}
+		if c.Location.TimezoneUpdate.Interval < 0 {
+			problems = append(problems, "location.timezone_update.interval must not be negative")
+		}
+		if c.Location.TimezoneUpdate.Enabled && !c.Location.TimezoneUpdate.UpdateConfig && len(c.Location.TimezoneUpdate.Command) == 0 {
+			problems = append(problems, "location.timezone_update.command is required unless location.timezone_update.update_config is true")
+		}
+	}
 	if strings.TrimSpace(c.Automation.Timezone) == "" {
 		problems = append(problems, "automation.timezone is required")
 	} else if _, err := time.LoadLocation(c.Automation.Timezone); err != nil {
@@ -172,7 +247,7 @@ func (c Config) Validate() error {
 	}
 
 	if len(problems) > 0 {
-		return fmt.Errorf(strings.Join(problems, "; "))
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
 }
@@ -186,8 +261,9 @@ func (c Config) Normalize() (NormalizedConfig, error) {
 		return NormalizedConfig{}, err
 	}
 	out := NormalizedConfig{
-		Garmin: c.Garmin,
-		API:    c.API,
+		Garmin:   c.Garmin,
+		Location: normalizeLocation(c.Location),
+		API:      c.API,
 		Automation: NormalizedAutomation{
 			Location:        loc,
 			HeatingPrograms: make([]domainheating.HeatingProgram, 0, len(c.Automation.HeatingPrograms)),
@@ -201,6 +277,60 @@ func (c Config) Normalize() (NormalizedConfig, error) {
 		out.Automation.HeatingPrograms = append(out.Automation.HeatingPrograms, normalized)
 	}
 	return out, nil
+}
+
+func normalizeLocation(in LocationConfig) NormalizedLocation {
+	out := NormalizedLocation{
+		Enabled:      in.Enabled,
+		Provider:     strings.TrimSpace(in.Provider),
+		PollInterval: in.PollInterval,
+		RUTX50: RUTX50LocationConfig{
+			Endpoint:           strings.TrimSpace(in.RUTX50.Endpoint),
+			LoginEndpoint:      strings.TrimSpace(in.RUTX50.LoginEndpoint),
+			Username:           strings.TrimSpace(in.RUTX50.Username),
+			Password:           in.RUTX50.Password,
+			PasswordFile:       strings.TrimSpace(in.RUTX50.PasswordFile),
+			AuthToken:          strings.TrimSpace(in.RUTX50.AuthToken),
+			InsecureSkipVerify: in.RUTX50.InsecureSkipVerify,
+			Timeout:            in.RUTX50.Timeout,
+		},
+		Timezone: TimezoneLookupConfig{
+			Provider: strings.TrimSpace(in.Timezone.Provider),
+			Endpoint: strings.TrimSpace(in.Timezone.Endpoint),
+			Timeout:  in.Timezone.Timeout,
+		},
+		TimezoneUpdate: TimezoneUpdateConfig{
+			Enabled:      in.TimezoneUpdate.Enabled,
+			Interval:     in.TimezoneUpdate.Interval,
+			Command:      append([]string(nil), in.TimezoneUpdate.Command...),
+			UpdateConfig: in.TimezoneUpdate.UpdateConfig,
+		},
+	}
+	if out.Provider == "" {
+		out.Provider = "rutx50"
+	}
+	if out.PollInterval == 0 {
+		out.PollInterval = 5 * time.Minute
+	}
+	if out.RUTX50.Endpoint == "" {
+		out.RUTX50.Endpoint = "http://192.168.51.1/api/gps/position/status"
+	}
+	if out.RUTX50.LoginEndpoint == "" {
+		out.RUTX50.LoginEndpoint = "http://192.168.51.1/api/login"
+	}
+	if out.RUTX50.Timeout == 0 {
+		out.RUTX50.Timeout = 10 * time.Second
+	}
+	if out.Timezone.Provider == "" {
+		out.Timezone.Provider = "tzf"
+	}
+	if out.Timezone.Timeout == 0 {
+		out.Timezone.Timeout = 10 * time.Second
+	}
+	if out.TimezoneUpdate.Interval == 0 {
+		out.TimezoneUpdate.Interval = time.Hour
+	}
+	return out
 }
 
 func (c Config) HeatingScheduleDocument(revision string) HeatingScheduleDocument {

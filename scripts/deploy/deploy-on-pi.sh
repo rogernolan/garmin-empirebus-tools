@@ -9,6 +9,8 @@ BINARY_NAME="empirebusd"
 GO_BIN="${GO_BIN:-go}"
 SERVICE_UNIT_SOURCE="${REPO_ROOT}/ops/systemd/empirebusd.service"
 SERVICE_UNIT_DEST="/etc/systemd/system/empirebusd.service"
+SUDOERS_TIMEZONE_SOURCE="${REPO_ROOT}/ops/sudoers/xtura-timezone"
+SUDOERS_TIMEZONE_DEST="/etc/sudoers.d/xtura-timezone"
 
 cd "${REPO_ROOT}"
 
@@ -65,6 +67,7 @@ sudo mkdir -p "${RELEASE_DIR}"
 sudo install -m 0755 "${BUILD_DIR}/${BINARY_NAME}" "${RELEASE_DIR}/${BINARY_NAME}"
 sudo ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 sudo install -m 0644 "${SERVICE_UNIT_SOURCE}" "${SERVICE_UNIT_DEST}"
+sudo install -m 0440 "${SUDOERS_TIMEZONE_SOURCE}" "${SUDOERS_TIMEZONE_DEST}"
 sudo chown -R xtura:xtura "${INSTALL_ROOT}" /var/lib/xtura
 
 echo "==> Enabling ${SERVICE_NAME} on boot"
