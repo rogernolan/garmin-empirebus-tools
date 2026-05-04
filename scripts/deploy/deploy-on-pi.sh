@@ -81,8 +81,20 @@ echo "==> Recent ${SERVICE_NAME} logs"
 sudo journalctl -u "${SERVICE_NAME}.service" -n 50 --no-pager
 
 echo "==> Health check"
-curl --fail --silent --show-error http://127.0.0.1/v1/health
-echo
+HEALTH_OUTPUT="$(mktemp)"
+for attempt in {1..30}; do
+  if curl --fail --silent --show-error --max-time 2 http://127.0.0.1/v1/health >"${HEALTH_OUTPUT}" 2>&1; then
+    cat "${HEALTH_OUTPUT}"
+    echo
+    break
+  fi
+  if [[ "${attempt}" == 30 ]]; then
+    cat "${HEALTH_OUTPUT}" >&2
+    echo "health check failed after ${attempt} attempts" >&2
+    exit 1
+  fi
+  sleep 1
+done
 
 if [[ "${1:-HEAD}" != "HEAD" ]]; then
   echo "==> Returning repo to ${CURRENT_SHA}"
