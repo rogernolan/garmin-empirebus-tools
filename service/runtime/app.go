@@ -54,30 +54,34 @@ type TimezoneResolver interface {
 }
 
 type App struct {
-	startedAt        time.Time
-	cfg              config.NormalizedConfig
-	rawConfig        config.Config
-	configPath       string
-	revision         string
-	modeState        config.HeatingRuntimeState
-	runtimeStatePath string
-	logger           *log.Logger
-	adapter          HeatingController
-	lights           LightsController
-	water            WaterController
-	location         LocationProvider
-	timezoneResolver TimezoneResolver
-	broker           *events.Broker
-	sleep            func(time.Duration)
+	startedAt             time.Time
+	cfg                   config.NormalizedConfig
+	rawConfig             config.Config
+	configPath            string
+	revision              string
+	modeState             config.HeatingRuntimeState
+	runtimeStatePath      string
+	waterRuntimeState     config.WaterRuntimeState
+	waterRuntimeStatePath string
+	logger                *log.Logger
+	adapter               HeatingController
+	lights                LightsController
+	water                 WaterController
+	location              LocationProvider
+	timezoneResolver      TimezoneResolver
+	broker                *events.Broker
+	sleep                 func(time.Duration)
+	now                   func() time.Time
 
-	mu               sync.RWMutex
-	lightsState      domainlights.State
-	waterState       domainwater.State
-	locationState    domainlocation.State
-	locationFixes    []domainlocation.Fix
-	lastTimezoneSync time.Time
-	schedulerRunning bool
-	schedulerWake    chan struct{}
+	mu                 sync.RWMutex
+	lightsState        domainlights.State
+	waterState         domainwater.State
+	locationState      domainlocation.State
+	locationFixes      []domainlocation.Fix
+	lastTimezoneSync   time.Time
+	schedulerRunning   bool
+	schedulerWake      chan struct{}
+	waterSchedulerWake chan struct{}
 }
 
 type HeatingStateView = domainheating.State
@@ -148,23 +152,28 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		}
 	}
 	app := &App{
-		startedAt:        time.Now().UTC(),
-		cfg:              cfg,
-		rawConfig:        rawConfig,
-		configPath:       configPath,
-		runtimeStatePath: runtimeStatePath(configPath),
-		logger:           logger,
-		adapter:          adapter,
-		lights:           lights,
-		water:            water,
-		location:         location,
-		timezoneResolver: timezoneResolver,
-		broker:           broker,
-		sleep:            time.Sleep,
-		schedulerWake:    make(chan struct{}, 1),
+		startedAt:             time.Now().UTC(),
+		cfg:                   cfg,
+		rawConfig:             rawConfig,
+		configPath:            configPath,
+		runtimeStatePath:      runtimeStatePath(configPath),
+		waterRuntimeStatePath: waterRuntimeStatePath(configPath),
+		logger:                logger,
+		adapter:               adapter,
+		lights:                lights,
+		water:                 water,
+		location:              location,
+		timezoneResolver:      timezoneResolver,
+		broker:                broker,
+		now:                   time.Now,
+		schedulerWake:         make(chan struct{}, 1),
+		waterSchedulerWake:    make(chan struct{}, 1),
 	}
 	app.revision = readConfigRevision(configPath)
 	if err := app.loadRuntimeState(); err != nil {
+		return nil, err
+	}
+	if err := app.loadWaterRuntimeState(); err != nil {
 		return nil, err
 	}
 	app.locationState = domainlocation.State{
@@ -178,6 +187,7 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		go app.locationLoop(ctx)
 	}
 	go app.schedulerLoop(ctx)
+	go app.waterSchedulerLoop(ctx)
 	return app, nil
 }
 

@@ -25,6 +25,8 @@ type fakeApp struct {
 	schedule          config.HeatingScheduleDocument
 	mode              config.HeatingRuntimeState
 	cancelBoostCalled *bool
+	scheduledWater    domainwater.State
+	cancelWaterCalled *bool
 	lights            domainlights.State
 	water             domainwater.State
 	location          domainlocation.State
@@ -106,6 +108,17 @@ func (f fakeApp) OpenGreyWaterValve(context.Context) error {
 
 func (f fakeApp) CloseGreyWaterValve(context.Context) error {
 	return f.waterErr
+}
+
+func (f fakeApp) ScheduleGreyWaterOpening(context.Context, string, time.Duration) (domainwater.State, error) {
+	return f.scheduledWater, f.waterErr
+}
+
+func (f fakeApp) CancelGreyWaterOpening(context.Context) (domainwater.State, error) {
+	if f.cancelWaterCalled != nil {
+		*f.cancelWaterCalled = true
+	}
+	return f.scheduledWater, f.waterErr
 }
 
 func (f fakeApp) LocationState() domainlocation.State {
@@ -339,6 +352,52 @@ func TestHandleGreyWaterValveOpenRejectsBusy(t *testing.T) {
 	server.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleGreyWaterSchedulePost(t *testing.T) {
+	openAt := time.Date(2026, 5, 6, 1, 0, 0, 0, time.UTC)
+	server := New(fakeApp{
+		broker: events.NewBroker(1),
+		scheduledWater: domainwater.State{
+			ScheduledOpening: &domainwater.ScheduledOpening{
+				OpenAt:          openAt,
+				LocalTime:       "03:00",
+				Timezone:        "Europe/Rome",
+				DurationMinutes: 30,
+				Status:          "pending",
+			},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/water/grey-valve/schedule", bytes.NewBufferString(`{"target_time":"03:00","duration_minutes":30}`))
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+	var state domainwater.State
+	if err := json.Unmarshal(rr.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.ScheduledOpening == nil || !state.ScheduledOpening.OpenAt.Equal(openAt) {
+		t.Fatalf("unexpected scheduled opening %#v", state.ScheduledOpening)
+	}
+}
+
+func TestHandleGreyWaterScheduleCancel(t *testing.T) {
+	called := false
+	server := New(fakeApp{
+		broker:            events.NewBroker(1),
+		cancelWaterCalled: &called,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/water/grey-valve/schedule/cancel", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !called {
+		t.Fatal("expected cancel to be called")
 	}
 }
 

@@ -22,6 +22,17 @@ class XturaApi {
     return this.request("/v1/water/grey-valve/close", { method: "POST" });
   }
 
+  async scheduleGreyValve(targetTime, durationMinutes) {
+    return this.request("/v1/water/grey-valve/schedule", {
+      method: "POST",
+      body: { target_time: targetTime, duration_minutes: durationMinutes },
+    });
+  }
+
+  async cancelGreyValveSchedule() {
+    return this.request("/v1/water/grey-valve/schedule/cancel", { method: "POST" });
+  }
+
   async getHeatingMode() {
     return this.request("/v1/heating/mode");
   }
@@ -197,15 +208,23 @@ function renderWater() {
   const water = state.water;
   const openButton = byId("openGreyValve");
   const closeButton = byId("closeGreyValve");
+  const scheduleTime = byId("greyScheduleTime");
+  const scheduleDuration = byId("greyScheduleDuration");
+  const scheduleButton = byId("greyScheduleButton");
   if (!water) {
     byId("waterState").textContent = "Loading";
     byId("waterDetail").textContent = "Waiting for water state.";
+    byId("greyScheduleMessage").textContent = "";
     openButton.disabled = true;
     closeButton.disabled = true;
+    scheduleTime.disabled = true;
+    scheduleDuration.disabled = true;
+    scheduleButton.disabled = true;
     return;
   }
   const moving = water.command_in_progress || water.valve_moving;
   const direction = water.valve_direction === "closing" ? "Closing" : "Opening";
+  const scheduled = water.scheduled_opening;
   byId("waterState").textContent = moving ? direction : (water.valve_known ? "Idle" : "Unknown");
   byId("waterDetail").textContent = water.last_command_error
     ? `Last command error: ${water.last_command_error}`
@@ -214,6 +233,30 @@ function renderWater() {
       : "Grey water valve is ready.";
   openButton.disabled = state.requestInFlight || water.command_in_progress;
   closeButton.disabled = state.requestInFlight || water.command_in_progress;
+  if (scheduled) {
+    scheduleTime.value = scheduled.local_time || scheduleTime.value || "03:00";
+    scheduleDuration.value = String(scheduled.duration_minutes || 30);
+    scheduleButton.textContent = "Cancel";
+    byId("greyScheduleMessage").textContent = `Scheduled for ${formatScheduledOpen(scheduled.open_at)} for ${scheduled.duration_minutes} minutes.`;
+  } else {
+    scheduleButton.textContent = "Schedule";
+    byId("greyScheduleMessage").textContent = water.last_schedule_message || "";
+  }
+  scheduleTime.disabled = state.requestInFlight || Boolean(scheduled);
+  scheduleDuration.disabled = state.requestInFlight || Boolean(scheduled);
+  scheduleButton.disabled = state.requestInFlight;
+}
+
+function formatScheduledOpen(openAt) {
+  const date = new Date(openAt);
+  if (Number.isNaN(date.getTime())) {
+    return "the scheduled time";
+  }
+  return date.toLocaleString([], {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function renderHeating() {
@@ -674,6 +717,23 @@ function bindActions() {
       return;
     }
   });
+  byId("greyScheduleButton").addEventListener("click", async () => {
+    try {
+      const scheduled = byId("greyScheduleButton").textContent === "Cancel";
+      const water = scheduled
+        ? await withRequest(() => api.cancelGreyValveSchedule(), "Cancelling grey water schedule")
+        : await withRequest(
+          () => api.scheduleGreyValve(greyScheduleTime(), greyScheduleDuration()),
+          "Scheduling grey water valve",
+        );
+      state.water = water;
+    } catch (_) {
+      return;
+    }
+  });
+  byId("greyScheduleDuration").addEventListener("change", () => {
+    byId("greyScheduleDuration").value = String(greyScheduleDuration());
+  });
   document.querySelectorAll("[data-target]").forEach((button) => {
     button.addEventListener("click", async () => {
       try {
@@ -743,6 +803,21 @@ function flashCount() {
   const count = clampInteger(input.value, 1, 5);
   input.value = String(count);
   return count;
+}
+
+function greyScheduleTime() {
+  const input = byId("greyScheduleTime");
+  if (!/^\d{2}:\d{2}$/.test(input.value)) {
+    input.value = "03:00";
+  }
+  return input.value;
+}
+
+function greyScheduleDuration() {
+  const input = byId("greyScheduleDuration");
+  const duration = clampInteger(input.value, 1, 1440);
+  input.value = String(duration);
+  return duration;
 }
 
 async function adjustTarget(delta) {

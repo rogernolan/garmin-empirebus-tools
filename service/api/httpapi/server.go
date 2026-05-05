@@ -41,6 +41,8 @@ type Application interface {
 	WaterState() domainwater.State
 	OpenGreyWaterValve(context.Context) error
 	CloseGreyWaterValve(context.Context) error
+	ScheduleGreyWaterOpening(context.Context, string, time.Duration) (domainwater.State, error)
+	CancelGreyWaterOpening(context.Context) (domainwater.State, error)
 	LocationState() domainlocation.State
 	Broker() *events.Broker
 }
@@ -68,6 +70,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/water/state", s.handleWaterState)
 	mux.HandleFunc("/v1/water/grey-valve/open", s.handleGreyWaterValveOpen)
 	mux.HandleFunc("/v1/water/grey-valve/close", s.handleGreyWaterValveClose)
+	mux.HandleFunc("/v1/water/grey-valve/schedule", s.handleGreyWaterSchedule)
+	mux.HandleFunc("/v1/water/grey-valve/schedule/cancel", s.handleGreyWaterScheduleCancel)
 	mux.HandleFunc("/v1/location/state", s.handleLocationState)
 	mux.HandleFunc("/v1/events", s.handleEvents)
 	registerStaticRoutes(mux)
@@ -350,6 +354,48 @@ func (s *Server) handleGreyWaterValveCommand(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, s.app.WaterState())
 }
 
+func (s *Server) handleGreyWaterSchedule(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	var body struct {
+		TargetTime      string `json:"target_time"`
+		DurationMinutes int    `json:"duration_minutes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	state, err := s.app.ScheduleGreyWaterOpening(ctx, body.TargetTime, time.Duration(body.DurationMinutes)*time.Minute)
+	if err != nil {
+		if isValidationError(err) {
+			writeValidationError(w, err)
+			return
+		}
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) handleGreyWaterScheduleCancel(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	state, err := s.app.CancelGreyWaterOpening(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
+}
+
 func (s *Server) handleLocationState(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)
@@ -431,6 +477,9 @@ func isValidationError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "automation.") ||
 		strings.Contains(msg, "target_celsius") ||
+		strings.Contains(msg, "duration") ||
+		strings.Contains(msg, "HH:MM") ||
+		strings.Contains(msg, "24-hour time") ||
 		strings.Contains(msg, "unsupported") ||
 		strings.Contains(msg, "redundant") ||
 		strings.Contains(msg, "overlaps") ||

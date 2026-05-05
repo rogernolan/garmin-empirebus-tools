@@ -3,10 +3,15 @@ package runtime
 import (
 	"context"
 	"errors"
+	"io"
+	"log"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"empirebus-tests/service/api/events"
+	"empirebus-tests/service/config"
 	domainwater "empirebus-tests/service/domains/water"
 )
 
@@ -111,5 +116,141 @@ func TestWaterCommandRecordsError(t *testing.T) {
 	}
 	if state := app.WaterState(); state.LastCommandError != "valve failed" {
 		t.Fatalf("expected command error, got %q", state.LastCommandError)
+	}
+}
+
+func TestScheduleGreyWaterOpeningPersistsNextLocalOccurrenceAsUTC(t *testing.T) {
+	t.Parallel()
+
+	loc, err := time.LoadLocation("Europe/Rome")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 5, 5, 22, 0, 0, 0, loc)
+	app := &App{
+		rawConfig:             config.Config{Automation: config.AutomationConfig{Timezone: "Europe/Rome"}},
+		waterRuntimeStatePath: filepath.Join(t.TempDir(), "water-runtime.yaml"),
+		broker:                events.NewBroker(1),
+		logger:                log.New(io.Discard, "", 0),
+		now:                   func() time.Time { return now },
+		waterSchedulerWake:    make(chan struct{}, 1),
+	}
+
+	state, err := app.ScheduleGreyWaterOpening(context.Background(), "03:00", 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOpenAt := time.Date(2026, 5, 6, 3, 0, 0, 0, loc).UTC()
+	if state.ScheduledOpening == nil {
+		t.Fatal("expected scheduled opening in water state")
+	}
+	if !state.ScheduledOpening.OpenAt.Equal(wantOpenAt) {
+		t.Fatalf("got open_at %s want %s", state.ScheduledOpening.OpenAt, wantOpenAt)
+	}
+	if state.ScheduledOpening.DurationMinutes != 30 || state.ScheduledOpening.LocalTime != "03:00" {
+		t.Fatalf("unexpected schedule %#v", state.ScheduledOpening)
+	}
+	loaded, err := config.LoadWaterRuntimeState(app.waterRuntimeStatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ScheduledOpening == nil || !loaded.ScheduledOpening.OpenAt.Equal(wantOpenAt) {
+		t.Fatalf("schedule was not persisted: %#v", loaded.ScheduledOpening)
+	}
+}
+
+func TestCancelGreyWaterOpeningClearsPersistedSchedule(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "water-runtime.yaml")
+	openAt := time.Date(2026, 5, 6, 1, 0, 0, 0, time.UTC)
+	if err := config.SaveWaterRuntimeState(path, config.WaterRuntimeState{
+		ScheduledOpening: &config.GreyWaterScheduledOpening{
+			OpenAt:          openAt,
+			LocalTime:       "03:00",
+			Timezone:        "Europe/Rome",
+			DurationMinutes: 30,
+			Status:          config.GreyWaterSchedulePending,
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{
+		waterState: domainwater.State{
+			ScheduledOpening: &domainwater.ScheduledOpening{
+				OpenAt:          openAt,
+				LocalTime:       "03:00",
+				Timezone:        "Europe/Rome",
+				DurationMinutes: 30,
+				Status:          "pending",
+			},
+		},
+		waterRuntimeStatePath: path,
+		broker:                events.NewBroker(1),
+		logger:                log.New(io.Discard, "", 0),
+		waterSchedulerWake:    make(chan struct{}, 1),
+	}
+
+	state, err := app.CancelGreyWaterOpening(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ScheduledOpening != nil {
+		t.Fatalf("expected schedule cleared, got %#v", state.ScheduledOpening)
+	}
+	loaded, err := config.LoadWaterRuntimeState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ScheduledOpening != nil {
+		t.Fatalf("expected persisted schedule cleared, got %#v", loaded.ScheduledOpening)
+	}
+}
+
+func TestExecuteDueGreyWaterOpeningClosesAfterDurationAndLeavesMessage(t *testing.T) {
+	t.Parallel()
+
+	controller := &stubWaterController{}
+	path := filepath.Join(t.TempDir(), "water-runtime.yaml")
+	openAt := time.Date(2026, 5, 6, 1, 0, 0, 0, time.UTC)
+	now := openAt
+	app := &App{
+		water:                 controller,
+		waterRuntimeStatePath: path,
+		broker:                events.NewBroker(4),
+		logger:                log.New(io.Discard, "", 0),
+		sleep:                 func(time.Duration) {},
+		now:                   func() time.Time { return now },
+		waterSchedulerWake:    make(chan struct{}, 1),
+		waterRuntimeState: config.WaterRuntimeState{
+			ScheduledOpening: &config.GreyWaterScheduledOpening{
+				OpenAt:          openAt,
+				LocalTime:       "03:00",
+				Timezone:        "Europe/Rome",
+				DurationMinutes: 30,
+				Status:          config.GreyWaterSchedulePending,
+			},
+		},
+	}
+
+	if err := app.executeDueGreyWaterOpening(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := controller.commands, []string{"open", "close"}; !equalStrings(got, want) {
+		t.Fatalf("unexpected commands: got=%v want=%v", got, want)
+	}
+	state := app.WaterState()
+	if state.ScheduledOpening != nil {
+		t.Fatalf("expected schedule cleared, got %#v", state.ScheduledOpening)
+	}
+	if state.LastScheduleMessage == "" {
+		t.Fatal("expected completion message")
+	}
+	loaded, err := config.LoadWaterRuntimeState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ScheduledOpening != nil || loaded.LastScheduleMessage == "" {
+		t.Fatalf("unexpected persisted water runtime state %#v", loaded)
 	}
 }

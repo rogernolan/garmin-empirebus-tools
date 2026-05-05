@@ -65,3 +65,59 @@ func TestHeatingRuntimeStateValidateRejectsTargetOutsideSafeRange(t *testing.T) 
 		})
 	}
 }
+
+func TestWaterRuntimeStateRoundTrip(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "water-runtime.yaml")
+	openAt := time.Date(2026, 5, 6, 1, 0, 0, 0, time.UTC)
+	completedAt := openAt.Add(30 * time.Minute)
+	state := WaterRuntimeState{
+		ScheduledOpening: &GreyWaterScheduledOpening{
+			OpenAt:          openAt,
+			LocalTime:       "03:00",
+			Timezone:        "Europe/Rome",
+			DurationMinutes: 30,
+			Status:          GreyWaterSchedulePending,
+		},
+		LastScheduleMessage: "Grey water valve opened at 03:00 for 30 minutes.",
+		LastCompletedAt:     &completedAt,
+	}
+	if err := SaveWaterRuntimeState(path, state); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadWaterRuntimeState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ScheduledOpening == nil {
+		t.Fatal("expected scheduled opening")
+	}
+	if !loaded.ScheduledOpening.OpenAt.Equal(openAt) {
+		t.Fatalf("got open_at %s", loaded.ScheduledOpening.OpenAt)
+	}
+	if loaded.ScheduledOpening.LocalTime != "03:00" || loaded.ScheduledOpening.Timezone != "Europe/Rome" {
+		t.Fatalf("unexpected scheduled opening %#v", loaded.ScheduledOpening)
+	}
+	if loaded.ScheduledOpening.DurationMinutes != 30 {
+		t.Fatalf("got duration %d", loaded.ScheduledOpening.DurationMinutes)
+	}
+	if loaded.LastScheduleMessage == "" || loaded.LastCompletedAt == nil || !loaded.LastCompletedAt.Equal(completedAt) {
+		t.Fatalf("unexpected completion fields %#v", loaded)
+	}
+}
+
+func TestWaterRuntimeStateValidateRejectsInvalidSchedule(t *testing.T) {
+	t.Parallel()
+	state := WaterRuntimeState{
+		ScheduledOpening: &GreyWaterScheduledOpening{
+			OpenAt:          time.Date(2026, 5, 6, 1, 0, 0, 0, time.UTC),
+			LocalTime:       "25:00",
+			Timezone:        "Europe/Rome",
+			DurationMinutes: 0,
+			Status:          GreyWaterSchedulePending,
+		},
+	}
+	if err := state.Validate(); err == nil {
+		t.Fatal("expected validation error")
+	}
+}

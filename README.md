@@ -16,6 +16,12 @@ Run the Go tests:
 go test ./...
 ```
 
+Lint the static web UI JavaScript:
+
+```bash
+eslint web/static/app.js
+```
+
 Build and run the CLI:
 
 ```bash

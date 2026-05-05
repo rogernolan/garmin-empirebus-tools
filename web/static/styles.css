@@ -272,6 +272,16 @@ h2 {
   gap: 8px;
 }
 
+.grey-schedule-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 8px;
+}
+
+.grey-schedule-control .secondary-wide {
+  grid-column: 1 / -1;
+}
+
 .mode-switch {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

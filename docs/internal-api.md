@@ -24,6 +24,8 @@ Derived from current Go code only. Public authentication, authorization, and TLS
 | `/v1/water/state` | GET | `handleWaterState` | `WaterState()` | `water.State` | `405` | `TestHandleWaterStateGet` |
 | `/v1/water/grey-valve/open` | POST | `handleGreyWaterValveOpen` | `OpenGreyWaterValve(ctx)` | `water.State` | `409` busy, `502`, `405` | `TestHandleGreyWaterValveOpenRejectsBusy` |
 | `/v1/water/grey-valve/close` | POST | `handleGreyWaterValveClose` | `CloseGreyWaterValve(ctx)` | `water.State` | `409` busy, `502`, `405` | unknown |
+| `/v1/water/grey-valve/schedule` | POST | `handleGreyWaterSchedule` | `ScheduleGreyWaterOpening(ctx,time,duration)` | `water.State` | `400` decode/validation, `502`, `405` | `TestHandleGreyWaterSchedulePost` |
+| `/v1/water/grey-valve/schedule/cancel` | POST | `handleGreyWaterScheduleCancel` | `CancelGreyWaterOpening(ctx)` | `water.State` | `502`, `405` | `TestHandleGreyWaterScheduleCancel` |
 | `/v1/location/state` | GET | `handleLocationState` | `LocationState()` | `location.State` | `405` | `TestHandleLocationStateGet` |
 | `/v1/events` | GET | `handleEvents` | `Broker().Subscribe()` | Server-sent events | `500` if no flusher, `405` | unknown |
 
@@ -44,7 +46,8 @@ Most mutating HTTP handlers use a `30s` request context timeout in `service/api/
 | `HeatingPeriod` | `{"start":{"Hour":number,"Minute":number},"mode":"off|heat","target_celsius"?:number}` | `service/domains/heating/types.go` | `LocalTime` has no custom JSON tags, so field names are `Hour` and `Minute`. |
 | `Action` | `{"kind":string,"target_celsius"?:number}` | `service/automation/scheduler/scheduler.go` | Kinds: `noop`, `ensure_on_and_set_target`, `set_target`, `ensure_off`. |
 | `lights.State` | `{"external_known":bool,"external_on":bool,"flash_in_progress":bool,"last_command_error"?:string,"last_updated_at"?:time}` | `service/domains/lights/types.go` | Unknown exterior state has `external_known:false`. |
-| `water.State` | `{"valve_known":bool,"valve_moving":bool,"valve_direction"?:string,"command_in_progress":bool,"last_command_error"?:string,"last_updated_at"?:time}` | `service/domains/water/types.go` | `valve_direction` is `opening` or `closing` while an open/close control signal is active. No final open/closed valve position is inferred. |
+| `water.State` | `{"valve_known":bool,"valve_moving":bool,"valve_direction"?:string,"command_in_progress":bool,"last_command_error"?:string,"scheduled_opening"?:ScheduledOpening,"last_schedule_message"?:string,"last_schedule_completed_at"?:time,"last_updated_at"?:time}` | `service/domains/water/types.go` | `valve_direction` is `opening` or `closing` while an open/close control signal is active. No final open/closed valve position is inferred. |
+| `ScheduledOpening` | `{"open_at":time,"local_time":"HH:MM","timezone":string,"duration_minutes":number,"status":"pending|open","opened_at"?:time}` | `service/domains/water/types.go`, `service/config/water_runtime_state.go` | `open_at` is the fixed UTC instant derived from the next occurrence of `local_time` in the current automation timezone. |
 | `location.State` | `{"configured":bool,"known":bool,"provider"?:string,"latitude":number,"longitude":number,"is_moving":bool,"movement_meters"?:number,"timezone"?:string,"system_timezone"?:string,"timezone_updated_at"?:time,"last_updated_at"?:time,"last_error"?:string,"last_error_at"?:time,"timezone_update_mode"?:string}` | `service/domains/location/types.go` | Unconfigured state has `configured:false`. Configured but not yet polled has `known:false`. `is_moving` is inferred from cumulative GPS displacement over the configured movement window. |
 | `Event` | `{"type":string,"timestamp":time,"correlation_id"?:string,"payload"?:any}` | `service/api/events/broker.go` | SSE emits `event: <type>` and `data: <Event JSON>`. |
 
@@ -60,6 +63,8 @@ Most mutating HTTP handlers use a `30s` request context timeout in `service/api/
 | `POST /v1/lights/external/flash` | `{"count":1}` | `runtime.App.FlashExteriorLights` | Count must be `1..5`. |
 | `POST /v1/water/grey-valve/open` | none | `runtime.App.OpenGreyWaterValve` | Sends a five-second grey-water open button hold. |
 | `POST /v1/water/grey-valve/close` | none | `runtime.App.CloseGreyWaterValve` | Sends a five-second grey-water close button hold. |
+| `POST /v1/water/grey-valve/schedule` | `{"target_time":"03:00","duration_minutes":30}` | `runtime.App.ScheduleGreyWaterOpening`, `config.ParseClockTime`, `config.WaterRuntimeState.Validate` | Stores a one-off grey-water opening in `<config>.water-runtime.yaml`. The target is resolved in the current automation timezone and persisted as UTC so timezone changes do not move it. |
+| `POST /v1/water/grey-valve/schedule/cancel` | none | `runtime.App.CancelGreyWaterOpening` | Clears any pending or open scheduled grey-water event from persisted water runtime state. |
 
 ## Event Types
 
@@ -69,7 +74,7 @@ Most mutating HTTP handlers use a `30s` request context timeout in `service/api/
 | `service.connection_changed` | `runtime.App.publishStateLoop` | `AdapterHealth` | Published when Garmin connected flag changes. |
 | `automation.schedule_updated` | `runtime.App.UpdateHeatingSchedule` | `HeatingScheduleDocument` | After config save/reload succeeds. |
 | `location.state_changed` | `runtime.App.publishStateLoop` | `location.State` | Published when location state changes. |
-| `water.state_changed` | `runtime.App.publishStateLoop` | `water.State` | Published when water valve state or command status changes. |
+| `water.state_changed` | `runtime.App.publishStateLoop`, water schedule updates | `water.State` | Published when water valve state, command status, or persisted grey-water schedule state changes. |
 | `automation.run_started` | `runtime.App.executeTransition` | map with `program_id`, `next_transition_at`, `action` | Has `correlation_id`. |
 | `automation.run_failed` | `runtime.App.executeTransition` | map with `program_id`, `error` | Has same run correlation id. |
 | `automation.run_succeeded` | `runtime.App.executeTransition` | map with `program_id`, `action` | Has same run correlation id. |
