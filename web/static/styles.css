@@ -274,10 +274,11 @@ h2 {
 
 .grey-schedule-control {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  column-gap: 12px;
+  grid-template-columns: minmax(112px, 132px) auto minmax(112px, 132px);
+  column-gap: 10px;
   row-gap: 8px;
   align-items: end;
+  justify-content: center;
 }
 
 .grey-schedule-control .secondary-wide {
@@ -288,9 +289,15 @@ h2 {
   min-height: 44px;
   display: grid;
   place-items: center;
+  padding-inline: 4px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 850;
+}
+
+#greyScheduleTime,
+#greyScheduleDuration {
+  text-align: center;
 }
 
 .mode-switch {
