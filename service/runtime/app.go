@@ -22,6 +22,7 @@ import (
 	domainheating "empirebus-tests/service/domains/heating"
 	domainlights "empirebus-tests/service/domains/lights"
 	domainlocation "empirebus-tests/service/domains/location"
+	domainwater "empirebus-tests/service/domains/water"
 )
 
 type HeatingController interface {
@@ -36,6 +37,12 @@ type LightsController interface {
 	EnsureExteriorOn(context.Context) error
 	EnsureExteriorOff(context.Context) error
 	LightsState() domainlights.State
+}
+
+type WaterController interface {
+	OpenGreyWaterValve(context.Context, time.Duration) error
+	CloseGreyWaterValve(context.Context, time.Duration) error
+	WaterState() domainwater.State
 }
 
 type LocationProvider interface {
@@ -57,6 +64,7 @@ type App struct {
 	logger           *log.Logger
 	adapter          HeatingController
 	lights           LightsController
+	water            WaterController
 	location         LocationProvider
 	timezoneResolver TimezoneResolver
 	broker           *events.Broker
@@ -64,6 +72,7 @@ type App struct {
 
 	mu               sync.RWMutex
 	lightsState      domainlights.State
+	waterState       domainwater.State
 	locationState    domainlocation.State
 	locationFixes    []domainlocation.Fix
 	lastTimezoneSync time.Time
@@ -74,6 +83,7 @@ type App struct {
 type HeatingStateView = domainheating.State
 type ServiceHealthView = domainheating.ServiceHealth
 type LocationStateView = domainlocation.State
+type WaterStateView = domainwater.State
 
 var ErrScheduleRevisionConflict = errors.New("schedule revision conflict")
 
@@ -109,6 +119,10 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 	if controller, ok := interface{}(adapter).(LightsController); ok {
 		lights = controller
 	}
+	var water WaterController
+	if controller, ok := interface{}(adapter).(WaterController); ok {
+		water = controller
+	}
 	var location LocationProvider
 	var timezoneResolver TimezoneResolver
 	if cfg.Location.Enabled {
@@ -142,6 +156,7 @@ func New(ctx context.Context, rawConfig config.Config, configPath string, logger
 		logger:           logger,
 		adapter:          adapter,
 		lights:           lights,
+		water:            water,
 		location:         location,
 		timezoneResolver: timezoneResolver,
 		broker:           broker,
@@ -536,6 +551,7 @@ func (a *App) publishStateLoop(ctx context.Context) {
 	defer ticker.Stop()
 	var last domainheating.State
 	var lastLocation domainlocation.State
+	var lastWater domainwater.State
 	lastConnected := false
 	for {
 		select {
@@ -567,6 +583,15 @@ func (a *App) publishStateLoop(ctx context.Context) {
 					Type:      "location.state_changed",
 					Timestamp: time.Now().UTC(),
 					Payload:   location,
+				})
+			}
+			water := a.WaterState()
+			if water != lastWater {
+				lastWater = water
+				a.broker.Publish(events.Event{
+					Type:      "water.state_changed",
+					Timestamp: time.Now().UTC(),
+					Payload:   water,
 				})
 			}
 		}

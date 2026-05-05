@@ -85,6 +85,39 @@ func (c *Client) SendSimpleCommandAt(ctx context.Context, signal int, value int)
 	})
 }
 
+func (c *Client) HoldButton(ctx context.Context, signal int, hold time.Duration) (time.Time, error) {
+	if hold <= 0 {
+		hold = 120 * time.Millisecond
+	}
+	if err := ctx.Err(); err != nil {
+		return time.Time{}, err
+	}
+	c.session.WithTraceWindow(c.session.cfg.TraceWindow)
+	pressedAt, err := c.session.sendCommandAt(WireFrame{
+		MessageType: 17,
+		MessageCmd:  1,
+		Size:        3,
+		Data:        []int{signal, 0, 1},
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	timer := time.NewTimer(hold)
+	select {
+	case <-ctx.Done():
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		_ = c.releaseButton(signal)
+		return pressedAt, ctx.Err()
+	case <-timer.C:
+	}
+	return pressedAt, c.releaseButton(signal)
+}
+
 func (c *Client) GetTargetTemp(ctx context.Context) (float64, error) {
 	c.session.WithTraceWindow(c.session.cfg.TraceWindow)
 	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -164,10 +197,14 @@ func (c *Client) SetTargetTemp(ctx context.Context, target float64) error {
 
 func (c *Client) pressButton(signal int) error {
 	press := WireFrame{MessageType: 17, MessageCmd: 1, Size: 3, Data: []int{signal, 0, 1}}
-	release := WireFrame{MessageType: 17, MessageCmd: 1, Size: 3, Data: []int{signal, 0, 0}}
 	if err := c.session.sendCommand(press); err != nil {
 		return err
 	}
 	time.Sleep(120 * time.Millisecond)
+	return c.releaseButton(signal)
+}
+
+func (c *Client) releaseButton(signal int) error {
+	release := WireFrame{MessageType: 17, MessageCmd: 1, Size: 3, Data: []int{signal, 0, 0}}
 	return c.session.sendCommand(release)
 }

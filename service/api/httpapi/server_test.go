@@ -16,6 +16,7 @@ import (
 	domainheating "empirebus-tests/service/domains/heating"
 	domainlights "empirebus-tests/service/domains/lights"
 	domainlocation "empirebus-tests/service/domains/location"
+	domainwater "empirebus-tests/service/domains/water"
 	"empirebus-tests/service/runtime"
 )
 
@@ -25,8 +26,10 @@ type fakeApp struct {
 	mode              config.HeatingRuntimeState
 	cancelBoostCalled *bool
 	lights            domainlights.State
+	water             domainwater.State
 	location          domainlocation.State
 	flashLightsErr    error
+	waterErr          error
 	setTargetErr      error
 }
 
@@ -91,6 +94,18 @@ func (f fakeApp) LightsState() domainlights.State {
 
 func (f fakeApp) FlashExteriorLights(context.Context, int) error {
 	return f.flashLightsErr
+}
+
+func (f fakeApp) WaterState() domainwater.State {
+	return f.water
+}
+
+func (f fakeApp) OpenGreyWaterValve(context.Context) error {
+	return f.waterErr
+}
+
+func (f fakeApp) CloseGreyWaterValve(context.Context) error {
+	return f.waterErr
 }
 
 func (f fakeApp) LocationState() domainlocation.State {
@@ -290,6 +305,39 @@ func TestHandleExteriorFlashRejectsInvalidCount(t *testing.T) {
 	rr := httptest.NewRecorder()
 	server.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleWaterStateGet(t *testing.T) {
+	server := New(fakeApp{
+		broker: events.NewBroker(1),
+		water:  domainwater.State{ValveKnown: true, ValveMoving: true, ValveDirection: domainwater.ValveDirectionOpening},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/v1/water/state", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("got status %d", rr.Code)
+	}
+	var state domainwater.State
+	if err := json.Unmarshal(rr.Body.Bytes(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.ValveKnown || !state.ValveMoving || state.ValveDirection != domainwater.ValveDirectionOpening {
+		t.Fatalf("unexpected water state: %+v", state)
+	}
+}
+
+func TestHandleGreyWaterValveOpenRejectsBusy(t *testing.T) {
+	server := New(fakeApp{
+		broker:   events.NewBroker(1),
+		waterErr: runtime.ErrWaterCommandInProgress,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/water/grey-valve/open", nil)
+	rr := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
 		t.Fatalf("got status %d body=%s", rr.Code, rr.Body.String())
 	}
 }

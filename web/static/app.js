@@ -10,6 +10,18 @@ class XturaApi {
     });
   }
 
+  async getWaterState() {
+    return this.request("/v1/water/state");
+  }
+
+  async openGreyValve() {
+    return this.request("/v1/water/grey-valve/open", { method: "POST" });
+  }
+
+  async closeGreyValve() {
+    return this.request("/v1/water/grey-valve/close", { method: "POST" });
+  }
+
   async getHeatingMode() {
     return this.request("/v1/heating/mode");
   }
@@ -88,6 +100,7 @@ const api = new XturaApi();
 const state = {
   activeTab: "lighting",
   lights: null,
+  water: null,
   heatingMode: null,
   heatingState: null,
   schedule: null,
@@ -145,13 +158,16 @@ function setConnection(message, tone = "normal") {
 function setActiveTab(tab) {
   state.activeTab = tab;
   byId("lightingTab").classList.toggle("is-active", tab === "lighting");
+  byId("waterTab").classList.toggle("is-active", tab === "water");
   byId("heatingTab").classList.toggle("is-active", tab === "heating");
   byId("lightingPanel").hidden = tab !== "lighting";
+  byId("waterPanel").hidden = tab !== "water";
   byId("heatingPanel").hidden = tab !== "heating";
 }
 
 function render() {
   renderLights();
+  renderWater();
   renderHeating();
   renderSchedule();
   syncCountdownRefresh();
@@ -175,6 +191,29 @@ function renderLights() {
       : "Exterior light state has not been observed yet.";
   byId("flashCount").disabled = state.requestInFlight || lights.flash_in_progress;
   flashButton.disabled = state.requestInFlight || lights.flash_in_progress;
+}
+
+function renderWater() {
+  const water = state.water;
+  const openButton = byId("openGreyValve");
+  const closeButton = byId("closeGreyValve");
+  if (!water) {
+    byId("waterState").textContent = "Loading";
+    byId("waterDetail").textContent = "Waiting for water state.";
+    openButton.disabled = true;
+    closeButton.disabled = true;
+    return;
+  }
+  const moving = water.command_in_progress || water.valve_moving;
+  const direction = water.valve_direction === "closing" ? "Closing" : "Opening";
+  byId("waterState").textContent = moving ? direction : (water.valve_known ? "Idle" : "Unknown");
+  byId("waterDetail").textContent = water.last_command_error
+    ? `Last command error: ${water.last_command_error}`
+    : moving
+      ? "Holding the valve control for five seconds."
+      : "Grey water valve is ready.";
+  openButton.disabled = state.requestInFlight || water.command_in_progress;
+  closeButton.disabled = state.requestInFlight || water.command_in_progress;
 }
 
 function renderHeating() {
@@ -563,12 +602,14 @@ async function withRequest(action, busyMessage) {
 }
 
 async function loadInitialState() {
-  const [lights, mode, schedule] = await Promise.all([
+  const [lights, water, mode, schedule] = await Promise.all([
     api.getLightsState(),
+    api.getWaterState(),
     api.getHeatingMode(),
     api.getHeatingSchedule(),
   ]);
   state.lights = lights;
+  state.water = water;
   state.heatingMode = mode;
   state.schedule = schedule;
   setStatus("Loaded");
@@ -581,6 +622,10 @@ function connectEvents() {
   events.onerror = () => setConnection("Reconnecting", "warning");
   events.addEventListener("lights.state_changed", (event) => {
     state.lights = JSON.parse(event.data).payload;
+    render();
+  });
+  events.addEventListener("water.state_changed", (event) => {
+    state.water = JSON.parse(event.data).payload;
     render();
   });
   events.addEventListener("heating.mode_changed", (event) => {
@@ -599,6 +644,7 @@ function connectEvents() {
 
 function bindActions() {
   byId("lightingTab").addEventListener("click", () => setActiveTab("lighting"));
+  byId("waterTab").addEventListener("click", () => setActiveTab("water"));
   byId("heatingTab").addEventListener("click", () => setActiveTab("heating"));
   byId("flashLights").addEventListener("click", async () => {
     try {
@@ -611,6 +657,22 @@ function bindActions() {
   });
   byId("flashCount").addEventListener("change", () => {
     byId("flashCount").value = String(flashCount());
+  });
+  byId("openGreyValve").addEventListener("click", async () => {
+    try {
+      const water = await withRequest(() => api.openGreyValve(), "Opening grey water valve");
+      state.water = water;
+    } catch (_) {
+      return;
+    }
+  });
+  byId("closeGreyValve").addEventListener("click", async () => {
+    try {
+      const water = await withRequest(() => api.closeGreyValve(), "Closing grey water valve");
+      state.water = water;
+    } catch (_) {
+      return;
+    }
   });
   document.querySelectorAll("[data-target]").forEach((button) => {
     button.addEventListener("click", async () => {

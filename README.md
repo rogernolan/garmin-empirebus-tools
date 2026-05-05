@@ -24,6 +24,14 @@ PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go run ./cmd/heatingctl ge
 PATH=/opt/homebrew/bin:/opt/homebrew/opt/go/bin:$PATH go run ./cmd/heatingctl set-target-temp --value 20.0 --verbose
 ```
 
+Capture Garmin websocket traffic without browser developer tools:
+
+```bash
+go run ./cmd/wscapture -out captures/grey-water.ndjson
+```
+
+Leave it running while pressing the Garmin UI controls, then stop it with `Ctrl-C`. The capture is newline-delimited JSON with timestamps, direction, parsed frame fields, signal id, value, and the raw websocket message.
+
 The Go client currently:
 
 - replays the Garmin bootstrap and heartbeat traffic
@@ -73,6 +81,11 @@ Current HTTP endpoints:
 - `GET /v1/automation/heating-programs`
 - `GET /v1/automation/heating-schedule`
 - `PUT /v1/automation/heating-schedule`
+- `GET /v1/lights/state`
+- `POST /v1/lights/external/flash`
+- `GET /v1/water/state`
+- `POST /v1/water/grey-valve/open`
+- `POST /v1/water/grey-valve/close`
 - `GET /v1/events`
 
 The location service defaults to the Teltonika RUTX50 GPS position endpoint at `http://192.168.51.1/api/gps/position/status` when `location.enabled` is true. It exposes the latest longitude, latitude, and timezone at `GET /v1/location/state`; see [location-service.md](docs/location-service.md) for the RUTX50 endpoint config, timezone lookup, and Pi timezone update setup.

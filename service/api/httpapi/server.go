@@ -13,6 +13,7 @@ import (
 	"empirebus-tests/service/config"
 	domainlights "empirebus-tests/service/domains/lights"
 	domainlocation "empirebus-tests/service/domains/location"
+	domainwater "empirebus-tests/service/domains/water"
 	"empirebus-tests/service/runtime"
 )
 
@@ -37,6 +38,9 @@ type Application interface {
 	UpdateHeatingSchedule(context.Context, config.HeatingScheduleDocument) (config.HeatingScheduleDocument, error)
 	LightsState() domainlights.State
 	FlashExteriorLights(context.Context, int) error
+	WaterState() domainwater.State
+	OpenGreyWaterValve(context.Context) error
+	CloseGreyWaterValve(context.Context) error
 	LocationState() domainlocation.State
 	Broker() *events.Broker
 }
@@ -61,6 +65,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/v1/automation/heating-schedule", s.handleHeatingSchedule)
 	mux.HandleFunc("/v1/lights/state", s.handleLightsState)
 	mux.HandleFunc("/v1/lights/external/flash", s.handleExteriorFlash)
+	mux.HandleFunc("/v1/water/state", s.handleWaterState)
+	mux.HandleFunc("/v1/water/grey-valve/open", s.handleGreyWaterValveOpen)
+	mux.HandleFunc("/v1/water/grey-valve/close", s.handleGreyWaterValveClose)
 	mux.HandleFunc("/v1/location/state", s.handleLocationState)
 	mux.HandleFunc("/v1/events", s.handleEvents)
 	registerStaticRoutes(mux)
@@ -307,6 +314,40 @@ func (s *Server) handleExteriorFlash(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.app.LightsState())
+}
+
+func (s *Server) handleWaterState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.WaterState())
+}
+
+func (s *Server) handleGreyWaterValveOpen(w http.ResponseWriter, r *http.Request) {
+	s.handleGreyWaterValveCommand(w, r, s.app.OpenGreyWaterValve)
+}
+
+func (s *Server) handleGreyWaterValveClose(w http.ResponseWriter, r *http.Request) {
+	s.handleGreyWaterValveCommand(w, r, s.app.CloseGreyWaterValve)
+}
+
+func (s *Server) handleGreyWaterValveCommand(w http.ResponseWriter, r *http.Request, command func(context.Context) error) {
+	if r.Method != http.MethodPost {
+		methodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
+	defer cancel()
+	if err := command(ctx); err != nil {
+		if errors.Is(err, runtime.ErrWaterCommandInProgress) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "water_command_in_progress"})
+			return
+		}
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.app.WaterState())
 }
 
 func (s *Server) handleLocationState(w http.ResponseWriter, r *http.Request) {

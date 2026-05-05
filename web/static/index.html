@@ -20,6 +20,7 @@
 
         <nav class="tabs" aria-label="Controls">
           <button id="lightingTab" class="tab is-active" type="button" aria-controls="lightingPanel">Lighting</button>
+          <button id="waterTab" class="tab" type="button" aria-controls="waterPanel">Water</button>
           <button id="heatingTab" class="tab" type="button" aria-controls="heatingPanel">Heating</button>
         </nav>
 
@@ -35,6 +36,20 @@
             </div>
             <button id="flashLights" class="primary-action" type="button">Flash exterior lights</button>
             <p id="lightsDetail" class="detail-text">Waiting for light state.</p>
+          </div>
+        </section>
+
+        <section id="waterPanel" class="tab-panel" hidden>
+          <div class="panel">
+            <div class="panel-heading">
+              <h2>Grey water valve</h2>
+              <span id="waterState" class="state-text">Loading</span>
+            </div>
+            <div class="valve-actions">
+              <button id="openGreyValve" class="primary-action" type="button">Open</button>
+              <button id="closeGreyValve" class="secondary-wide" type="button">Close</button>
+            </div>
+            <p id="waterDetail" class="detail-text">Waiting for water state.</p>
           </div>
         </section>
 

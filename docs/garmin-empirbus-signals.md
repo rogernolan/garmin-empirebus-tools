@@ -259,7 +259,19 @@ Working assumption:
 
 ### Known commands
 
-No browser-confirmed write commands are captured yet for water-domain controls.
+No browser-confirmed outbound write frames are captured yet for water-domain controls.
+
+Capture evidence from `captures/grey-water-test.ndjson` on 2026-05-05 shows two grey-water tank discharge open/close cycles as inbound Garmin state broadcasts while the Garmin UI was used:
+
+- `4` (`Tank Discharge Open`) is asserted with `messagetype=16`, `messagecmd=1`, `data=[4,0,1]` while the open control is held, then released with `data=[4,0,0]`.
+- `5` (`Tank Discharge Close`) is asserted with `messagetype=16`, `messagecmd=1`, `data=[5,0,1]` while the close control is held, then released with `data=[5,0,0]`.
+- Observed hold durations in that capture were approximately 1.6s and 5.1s for open, and 2.6s and 5.9s for close.
+
+User-observed behavior on 2026-05-05: the grey-water valve control requires a long press to activate the stepper motor.
+
+Inferred write-command shape, not browser-confirmed: these controls likely use press/release writes matching other momentary buttons, `messagetype=17`, `messagecmd=1`, `data=[4,0,1]` then `[4,0,0]` for open and `data=[5,0,1]` then `[5,0,0]` for close. The required hold time should be treated as part of the command behavior rather than a simple click.
+
+Repo implementation note: `service/adapters/garmin/adapter.go` and `heating/client.go` use the inferred `messagetype=17`, `messagecmd=1` press/release shape for grey-water open and close, with the runtime hold duration set to five seconds in `service/runtime/water.go`.
 
 ### Known state / indication signals
 
@@ -274,8 +286,8 @@ No browser-confirmed write commands are captured yet for water-domain controls.
 Working assumption:
 
 - `27` is a likely control candidate
-- `4` and `5` may represent direct actions or state flags
-- no write frames are confirmed yet from the captures in this repo
+- `4` and `5` are momentary open/close controls for the tank discharge valve
+- no outbound browser write frames are confirmed yet from the captures in this repo
 
 ## Options
 

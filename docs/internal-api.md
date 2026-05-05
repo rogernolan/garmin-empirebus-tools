@@ -21,10 +21,13 @@ Derived from current Go code only. Public authentication, authorization, and TLS
 | `/v1/automation/heating-schedule` | PUT | `handleHeatingSchedule` | `UpdateHeatingSchedule(ctx,doc)` | `HeatingScheduleDocument` | `400` decode/validation, `409` revision conflict, `502`, `405` | `TestHandleHeatingSchedulePutMethodAndBody` |
 | `/v1/lights/state` | GET | `handleLightsState` | `LightsState()` | `lights.State` | `405` | `TestHandleLightsStateGet` |
 | `/v1/lights/external/flash` | POST | `handleExteriorFlash` | `FlashExteriorLights(ctx,count)` | `lights.State` | `400` decode/invalid count, `409` busy, `502`, `405` | `TestHandleExteriorFlashRejectsBusy`, `TestHandleExteriorFlashRejectsInvalidCount` |
+| `/v1/water/state` | GET | `handleWaterState` | `WaterState()` | `water.State` | `405` | `TestHandleWaterStateGet` |
+| `/v1/water/grey-valve/open` | POST | `handleGreyWaterValveOpen` | `OpenGreyWaterValve(ctx)` | `water.State` | `409` busy, `502`, `405` | `TestHandleGreyWaterValveOpenRejectsBusy` |
+| `/v1/water/grey-valve/close` | POST | `handleGreyWaterValveClose` | `CloseGreyWaterValve(ctx)` | `water.State` | `409` busy, `502`, `405` | unknown |
 | `/v1/location/state` | GET | `handleLocationState` | `LocationState()` | `location.State` | `405` | `TestHandleLocationStateGet` |
 | `/v1/events` | GET | `handleEvents` | `Broker().Subscribe()` | Server-sent events | `500` if no flusher, `405` | unknown |
 
-All mutating HTTP handlers use a `30s` request context timeout in `service/api/httpapi/server.go`.
+Most mutating HTTP handlers use a `30s` request context timeout in `service/api/httpapi/server.go`; grey-water valve commands use `12s` around the five-second hold.
 
 ## JSON Shapes
 
@@ -41,6 +44,7 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | `HeatingPeriod` | `{"start":{"Hour":number,"Minute":number},"mode":"off|heat","target_celsius"?:number}` | `service/domains/heating/types.go` | `LocalTime` has no custom JSON tags, so field names are `Hour` and `Minute`. |
 | `Action` | `{"kind":string,"target_celsius"?:number}` | `service/automation/scheduler/scheduler.go` | Kinds: `noop`, `ensure_on_and_set_target`, `set_target`, `ensure_off`. |
 | `lights.State` | `{"external_known":bool,"external_on":bool,"flash_in_progress":bool,"last_command_error"?:string,"last_updated_at"?:time}` | `service/domains/lights/types.go` | Unknown exterior state has `external_known:false`. |
+| `water.State` | `{"valve_known":bool,"valve_moving":bool,"valve_direction"?:string,"command_in_progress":bool,"last_command_error"?:string,"last_updated_at"?:time}` | `service/domains/water/types.go` | `valve_direction` is `opening` or `closing` while an open/close control signal is active. No final open/closed valve position is inferred. |
 | `location.State` | `{"configured":bool,"known":bool,"provider"?:string,"latitude":number,"longitude":number,"is_moving":bool,"movement_meters"?:number,"timezone"?:string,"system_timezone"?:string,"timezone_updated_at"?:time,"last_updated_at"?:time,"last_error"?:string,"last_error_at"?:time,"timezone_update_mode"?:string}` | `service/domains/location/types.go` | Unconfigured state has `configured:false`. Configured but not yet polled has `known:false`. `is_moving` is inferred from cumulative GPS displacement over the configured movement window. |
 | `Event` | `{"type":string,"timestamp":time,"correlation_id"?:string,"payload"?:any}` | `service/api/events/broker.go` | SSE emits `event: <type>` and `data: <Event JSON>`. |
 
@@ -54,6 +58,8 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | `POST /v1/heating/mode/boost` | `{"target_celsius":22.0,"duration_minutes":60}` | `runtime.App.SetHeatingModeBoost` | Duration must be greater than zero; `target_celsius` uses the same safe range as manual mode. |
 | `PUT /v1/automation/heating-schedule` | `HeatingScheduleDocument` | `config.Config.WithHeatingSchedule`, `Validate` | `revision` is optional; if both current and supplied revisions exist and differ, returns `409`; heat periods use the same safe target range. |
 | `POST /v1/lights/external/flash` | `{"count":1}` | `runtime.App.FlashExteriorLights` | Count must be `1..5`. |
+| `POST /v1/water/grey-valve/open` | none | `runtime.App.OpenGreyWaterValve` | Sends a five-second grey-water open button hold. |
+| `POST /v1/water/grey-valve/close` | none | `runtime.App.CloseGreyWaterValve` | Sends a five-second grey-water close button hold. |
 
 ## Event Types
 
@@ -63,6 +69,7 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | `service.connection_changed` | `runtime.App.publishStateLoop` | `AdapterHealth` | Published when Garmin connected flag changes. |
 | `automation.schedule_updated` | `runtime.App.UpdateHeatingSchedule` | `HeatingScheduleDocument` | After config save/reload succeeds. |
 | `location.state_changed` | `runtime.App.publishStateLoop` | `location.State` | Published when location state changes. |
+| `water.state_changed` | `runtime.App.publishStateLoop` | `water.State` | Published when water valve state or command status changes. |
 | `automation.run_started` | `runtime.App.executeTransition` | map with `program_id`, `next_transition_at`, `action` | Has `correlation_id`. |
 | `automation.run_failed` | `runtime.App.executeTransition` | map with `program_id`, `error` | Has same run correlation id. |
 | `automation.run_succeeded` | `runtime.App.executeTransition` | map with `program_id`, `action` | Has same run correlation id. |
@@ -73,9 +80,9 @@ All mutating HTTP handlers use a `30s` request context timeout in `service/api/h
 | Layer | Files | Responsibility |
 |---|---|---|
 | HTTP | `service/api/httpapi/server.go` | Route registration, JSON decode/encode, HTTP status mapping, SSE stream. |
-| Runtime app | `service/runtime/app.go`, `service/runtime/mode.go`, `service/runtime/lights.go` | Service state, scheduler loop, runtime modes, schedule persistence, light flash orchestration, location polling. |
+| Runtime app | `service/runtime/app.go`, `service/runtime/mode.go`, `service/runtime/lights.go`, `service/runtime/water.go` | Service state, scheduler loop, runtime modes, schedule persistence, light flash orchestration, grey-water valve commands, location polling. |
 | Config | `service/config/config.go`, `service/config/runtime_state.go` | YAML load/save, schedule document conversion, validation, runtime mode state persistence. |
-| Domain types | `service/domains/heating/types.go`, `service/domains/lights/types.go`, `service/domains/location/types.go` | JSON structs and validation helpers. |
+| Domain types | `service/domains/heating/types.go`, `service/domains/lights/types.go`, `service/domains/location/types.go`, `service/domains/water/types.go` | JSON structs and validation helpers. |
 | Scheduler | `service/automation/scheduler/scheduler.go` | Active/next period calculation and action derivation. |
 | Garmin adapter | `service/adapters/garmin/adapter.go` | Bridges runtime controllers to the lower-level websocket client. |
 | Teltonika adapter | `service/adapters/teltonika/rutx50.go` | Polls the RUTX50 JSON GPS status endpoint for coordinates. |

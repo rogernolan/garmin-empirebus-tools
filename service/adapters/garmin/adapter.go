@@ -10,6 +10,7 @@ import (
 	rootheating "empirebus-tests/heating"
 	domainheating "empirebus-tests/service/domains/heating"
 	domainlights "empirebus-tests/service/domains/lights"
+	domainwater "empirebus-tests/service/domains/water"
 )
 
 type Config struct {
@@ -29,6 +30,7 @@ type Adapter struct {
 	client      *rootheating.Client
 	state       domainheating.State
 	lightsState domainlights.State
+	waterState  domainwater.State
 	health      domainheating.AdapterHealth
 }
 
@@ -127,11 +129,14 @@ func (a *Adapter) pollState() {
 	snapshot := snapshotFromRootState(state)
 	a.mu.RLock()
 	currentLights := a.lightsState
+	currentWater := a.waterState
 	a.mu.RUnlock()
 	lights := lightsSnapshotFromSession(session, currentLights)
+	water := waterSnapshotFromSession(session, currentWater)
 	a.mu.Lock()
 	a.state = snapshot
 	a.lightsState = lights
+	a.waterState = water
 	if !state.LastUpdated.IsZero() {
 		last := state.LastUpdated
 		a.health.LastFrameAt = &last
@@ -151,6 +156,12 @@ func (a *Adapter) LightsState() domainlights.State {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return a.lightsState
+}
+
+func (a *Adapter) WaterState() domainwater.State {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.waterState
 }
 
 func (a *Adapter) Health() domainheating.AdapterHealth {
@@ -183,6 +194,14 @@ func (a *Adapter) EnsureExteriorOn(ctx context.Context) error {
 
 func (a *Adapter) EnsureExteriorOff(ctx context.Context) error {
 	return a.ensureExteriorState(ctx, 48, true)
+}
+
+func (a *Adapter) OpenGreyWaterValve(ctx context.Context, hold time.Duration) error {
+	return a.holdWaterButton(ctx, 4, hold)
+}
+
+func (a *Adapter) CloseGreyWaterValve(ctx context.Context, hold time.Duration) error {
+	return a.holdWaterButton(ctx, 5, hold)
 }
 
 func (a *Adapter) withClient(fn func(*rootheating.Client) error) error {
@@ -256,6 +275,49 @@ func (a *Adapter) ensureExteriorState(ctx context.Context, signal int, wantOn bo
 	return nil
 }
 
+func (a *Adapter) holdWaterButton(ctx context.Context, signal int, hold time.Duration) error {
+	a.mu.RLock()
+	client := a.client
+	session := a.session
+	a.mu.RUnlock()
+	if client == nil || session == nil {
+		err := fmt.Errorf("garmin adapter not connected")
+		a.mu.Lock()
+		a.waterState.LastCommandError = err.Error()
+		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin command rejected: adapter not connected")
+		}
+		return err
+	}
+	pressedAt, err := client.HoldButton(ctx, signal, hold)
+	if err != nil {
+		a.mu.Lock()
+		a.waterState.LastCommandError = err.Error()
+		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin command failed: %v", err)
+		}
+		return err
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := session.WaitForSignalIsOnAfter(waitCtx, signal, false, pressedAt); err != nil {
+		a.mu.Lock()
+		a.waterState.LastCommandError = err.Error()
+		a.mu.Unlock()
+		if a.logger != nil {
+			a.logger.Printf("garmin command failed: %v", err)
+		}
+		return err
+	}
+	a.pollState()
+	a.mu.Lock()
+	a.waterState.LastCommandError = ""
+	a.mu.Unlock()
+	return nil
+}
+
 func (a *Adapter) closeSession() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -314,4 +376,39 @@ func lightsSnapshotFromSession(session *rootheating.Session, current domainlight
 		current.LastUpdatedAt = &offAt
 	}
 	return current
+}
+
+func waterSnapshotFromSession(session *rootheating.Session, current domainwater.State) domainwater.State {
+	open, openKnown, openAt := session.SignalIsOn(4)
+	close, closeKnown, closeAt := session.SignalIsOn(5)
+	switch {
+	case openKnown && open && (!closeKnown || openAt.After(closeAt)):
+		current.ValveKnown = true
+		current.ValveMoving = true
+		current.ValveDirection = domainwater.ValveDirectionOpening
+		current.LastUpdatedAt = stableTimePointer(current.LastUpdatedAt, openAt)
+	case closeKnown && close && (!openKnown || closeAt.After(openAt)):
+		current.ValveKnown = true
+		current.ValveMoving = true
+		current.ValveDirection = domainwater.ValveDirectionClosing
+		current.LastUpdatedAt = stableTimePointer(current.LastUpdatedAt, closeAt)
+	case openKnown && (!closeKnown || openAt.After(closeAt) || openAt.Equal(closeAt)):
+		current.ValveKnown = true
+		current.ValveMoving = false
+		current.ValveDirection = domainwater.ValveDirectionNone
+		current.LastUpdatedAt = stableTimePointer(current.LastUpdatedAt, openAt)
+	case closeKnown:
+		current.ValveKnown = true
+		current.ValveMoving = false
+		current.ValveDirection = domainwater.ValveDirectionNone
+		current.LastUpdatedAt = stableTimePointer(current.LastUpdatedAt, closeAt)
+	}
+	return current
+}
+
+func stableTimePointer(current *time.Time, next time.Time) *time.Time {
+	if current != nil && current.Equal(next) {
+		return current
+	}
+	return &next
 }
